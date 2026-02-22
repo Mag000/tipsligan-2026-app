@@ -23,6 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageContainer } from "../components/PageContainer";
 import { CommentsService, NewsComment } from "../services/CommentsService";
 import { NewsArticle, NewsService } from "../services/NewsService";
+import { getStoredAuthToken, getUsernameFromJwt } from "../utils/authToken";
 
 const useStyles = makeStyles({
   header: {
@@ -179,6 +180,12 @@ export default function Home() {
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [newCommentText, setNewCommentText] = useState("");
+
+  // Derive current user's username from the stored JWT (no API call needed)
+  const currentUsername = useMemo(() => {
+    const token = getStoredAuthToken();
+    return token ? getUsernameFromJwt(token) : null;
+  }, []);
 
   // Load all news and comments on mount
   useEffect(() => {
@@ -520,22 +527,28 @@ export default function Home() {
                             </span>
                           </div>
 
-                          <div className={styles.commentActions}>
-                            <Button
-                              size="small"
-                              appearance="subtle"
-                              icon={<EditRegular />}
-                              onClick={() =>
-                                handleEditComment(comment.Id, comment.Text)
-                              }
-                            />
-                            <Button
-                              size="small"
-                              appearance="subtle"
-                              icon={<DeleteRegular />}
-                              onClick={() => handleDeleteComment(comment.Id)}
-                            />
-                          </div>
+                          {currentUsername &&
+                            comment.CreatedBy.toLowerCase() ===
+                              currentUsername.toLowerCase() && (
+                              <div className={styles.commentActions}>
+                                <Button
+                                  size="small"
+                                  appearance="subtle"
+                                  icon={<EditRegular />}
+                                  onClick={() =>
+                                    handleEditComment(comment.Id, comment.Text)
+                                  }
+                                />
+                                <Button
+                                  size="small"
+                                  appearance="subtle"
+                                  icon={<DeleteRegular />}
+                                  onClick={() =>
+                                    handleDeleteComment(comment.Id)
+                                  }
+                                />
+                              </div>
+                            )}
                         </>
                       )}
                     </div>

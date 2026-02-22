@@ -100,6 +100,25 @@ export function getUserIdFromJwt(token: string): string | null {
 }
 
 /**
+ * Extracts the username from a JWT token (the format the backend returns).
+ * The backend uses JwtSecurityTokenHandler which maps ClaimTypes.Name
+ * to the "unique_name" claim key in the JWT payload.
+ */
+export function getUsernameFromJwt(token: string): string | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // Base64url → Base64: replace - with + and _ with /
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64));
+    // .NET JwtSecurityTokenHandler maps ClaimTypes.Name → "unique_name"
+    return payload["unique_name"] ?? payload["name"] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Gets the auth token from localStorage
  */
 export function getStoredAuthToken(): string | null {
