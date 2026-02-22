@@ -3,8 +3,17 @@ import {
   SvenskaSpelResultResponse,
 } from "../types/svenskaspel";
 import { getAuthHeaders, isAuthenticated } from "../utils/authHelpers";
+import { requestDeduplicator } from "../utils/requestDeduplication";
+import { retryWithBackoff } from "../utils/retryWithBackoff";
 
 const API_BASE_URL = "http://localhost:52259/api";
+
+/** Response shape from GET /api/round/latest-synced */
+interface LatestSyncedRound {
+  LatestSPRoundNum: number;
+  NewRoundsCreated: number;
+}
+
 export class APIManager {
   // Authentication
   static async login(username: string, password: string): Promise<string> {
@@ -119,90 +128,143 @@ export class APIManager {
   }
 
   // Get user bets for a specific round - userId is extracted from Bearer token on backend
-  static async getUserBetsForRound(round: number, userId?: string | number) {
-    try {
-      const headers = getAuthHeaders() || undefined;
+  static async getUserBetsForRound(
+    round: number,
+    userId?: string | number,
+    signal?: AbortSignal,
+  ) {
+    return requestDeduplicator.deduplicate(
+      `userBets-${round}-${userId || "current"}`,
+      async () => {
+        try {
+          const headers = getAuthHeaders() || undefined;
 
-      const response = await fetch(`${API_BASE_URL}/bets/${round}/user`, {
-        headers,
-      });
+          const response = await fetch(`${API_BASE_URL}/bets/${round}/user`, {
+            headers,
+            signal,
+          });
 
-      if (!response.ok) {
-        console.warn(
-          `⚠️ Failed to fetch bets for round ${round}: ${response.status} ${response.statusText}`,
-        );
-        return []; // Return empty array instead of throwing
-      }
+          if (!response.ok) {
+            console.warn(
+              `⚠️ Failed to fetch bets for round ${round}: ${response.status} ${response.statusText}`,
+            );
+            return []; // Return empty array instead of throwing
+          }
 
-      const allBets = await response.json();
-      console.log(`📦 All bets from API for round ${round}:`, allBets);
+          const allBets = await response.json();
+          console.log(`📦 All bets from API for round ${round}:`, allBets);
 
-      // Filter bets for the specific user
-      // Compare as strings to handle both GUID strings and numeric IDs
-      const userBetsFiltered = allBets.filter(
-        (bet: any) =>
-          String(bet.aspnet_UsersUserId).toUpperCase() ===
-          String(userId).toUpperCase(),
-      );
+          // Filter bets for the specific user
+          // Compare as strings to handle both GUID strings and numeric IDs
+          const userBetsFiltered = allBets.filter(
+            (bet: any) =>
+              String(bet.aspnet_UsersUserId).toUpperCase() ===
+              String(userId).toUpperCase(),
+          );
 
-      console.log(`✅ Filtered bets for user ${userId}:`, userBetsFiltered);
-      return userBetsFiltered;
-    } catch (error) {
-      console.warn(`⚠️ Error fetching user bets for round ${round}:`, error);
-      return []; // Return empty array on error so app continues to work
+          console.log(`✅ Filtered bets for user ${userId}:`, userBetsFiltered);
+          return userBetsFiltered;
+        } catch (error) {
+          console.warn(
+            `⚠️ Error fetching user bets for round ${round}:`,
+            error,
+          );
+          return []; // Return empty array on error so app continues to work
+        }
+      },
+    );
+  }
+
+  // Submit or update user bet for a specific round
+  // POST /bets/{roundNumber} - See contracts/betting-api.md
+  static async submitUserBet(
+    roundNumber: number,
+    selections: Array<{ matchNumber: number; outcome: "1" | "X" | "2" }>,
+  ) {
+    const headers = getAuthHeaders();
+    if (!headers) {
+      throw new Error("Authentication required");
     }
+
+    const response = await fetch(`${API_BASE_URL}/bets/${roundNumber}`, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ selections }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.message || `Failed to submit bet: ${response.status}`,
+      );
+    }
+
+    return await response.json();
   }
 
   // Svenska Spel API - Via backend to avoid CORS
   static async getSvenskaSpelDrawInfo(
     round: number,
+    signal?: AbortSignal,
   ): Promise<SvenskaSpelResponse> {
-    try {
-      const headers = getAuthHeaders();
-      if (!headers) return {} as SvenskaSpelResponse; // Redirect triggered
+    return requestDeduplicator.deduplicate(`drawInfo-${round}`, () =>
+      retryWithBackoff(async () => {
+        const headers = getAuthHeaders();
+        if (!headers) return {} as SvenskaSpelResponse; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/drawInfo/${round}`, {
-        method: "GET",
-        headers,
-        mode: "cors",
-      });
+        const response = await fetch(`${API_BASE_URL}/drawInfo/${round}`, {
+          method: "GET",
+          headers,
+          mode: "cors",
+          signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch draw info: ${response.status}`);
-      }
+        if (!response.ok) {
+          const error: any = new Error(
+            `Failed to fetch draw info: ${response.status}`,
+          );
+          error.status = response.status;
+          throw error;
+        }
 
-      const responseJson = await response.json();
-      return responseJson as SvenskaSpelResponse;
-    } catch (error) {
-      console.error("Error fetching draw info:", error);
-      throw error;
-    }
+        const responseJson = await response.json();
+        return responseJson as SvenskaSpelResponse;
+      }),
+    );
   }
 
   // Fetch results for finalized draws
   static async getSvenskaSpelDrawResult(
     round: number,
+    signal?: AbortSignal,
   ): Promise<SvenskaSpelResultResponse> {
-    try {
-      const headers = getAuthHeaders();
-      if (!headers) return {} as SvenskaSpelResultResponse; // Redirect triggered
+    return requestDeduplicator.deduplicate(`drawResult-${round}`, () =>
+      retryWithBackoff(async () => {
+        const headers = getAuthHeaders();
+        if (!headers) return {} as SvenskaSpelResultResponse; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/drawResult/${round}`, {
-        method: "GET",
-        headers,
-        mode: "cors",
-      });
+        const response = await fetch(`${API_BASE_URL}/drawResult/${round}`, {
+          method: "GET",
+          headers,
+          mode: "cors",
+          signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch draw result: ${response.status}`);
-      }
+        if (!response.ok) {
+          const error: any = new Error(
+            `Failed to fetch draw result: ${response.status}`,
+          );
+          error.status = response.status;
+          throw error;
+        }
 
-      const responseJson = await response.json();
-      return responseJson as SvenskaSpelResultResponse;
-    } catch (error) {
-      console.error("Error fetching draw result:", error);
-      throw error;
-    }
+        const responseJson = await response.json();
+        return responseJson as SvenskaSpelResultResponse;
+      }),
+    );
   }
 
   static async getSvenskaSpelDraws(): Promise<any> {
@@ -222,49 +284,60 @@ export class APIManager {
   }
 
   // Get bets for a specific round (all users)
-  static async getBetsForRound(round: number) {
-    try {
-      const headers = getAuthHeaders();
-      if (!headers) return []; // Redirect triggered
+  static async getBetsForRound(round: number, signal?: AbortSignal) {
+    return requestDeduplicator.deduplicate(`allBets-${round}`, () =>
+      retryWithBackoff(async () => {
+        const headers = getAuthHeaders();
+        if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/bets/${round}`, {
-        headers,
-      });
+        const response = await fetch(`${API_BASE_URL}/bets/${round}`, {
+          headers,
+          signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch bets for round ${round}`);
-      }
+        if (!response.ok) {
+          const error: any = new Error(
+            `Failed to fetch bets for round ${round}`,
+          );
+          error.status = response.status;
+          throw error;
+        }
 
-      const bets = await response.json();
-      console.log(`📦 Fetched ${bets.length} bets for round ${round}`);
-      return bets;
-    } catch (error) {
-      console.error(`Error fetching bets for round ${round}:`, error);
-      throw error;
-    }
+        const bets = await response.json();
+        console.log(`📦 Fetched ${bets.length} bets for round ${round}`);
+        return bets;
+      }),
+    );
   }
 
   // Get distribution (streckfördelning) for a specific round
-  static async getDistributionForRound(round: number) {
-    try {
-      const headers = getAuthHeaders();
-      if (!headers) return {}; // Redirect triggered
+  static async getDistributionForRound(round: number, signal?: AbortSignal) {
+    return requestDeduplicator.deduplicate(`distribution-${round}`, () =>
+      retryWithBackoff(async () => {
+        const headers = getAuthHeaders();
+        if (!headers) return {}; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/distribution/${round}`, {
-        headers,
-      });
+        const response = await fetch(`${API_BASE_URL}/distribution/${round}`, {
+          headers,
+          signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch distribution for round ${round}`);
-      }
+        if (!response.ok) {
+          const error: any = new Error(
+            `Failed to fetch distribution for round ${round}`,
+          );
+          error.status = response.status;
+          throw error;
+        }
 
-      const distribution = await response.json();
-      console.log(`📊 Fetched distribution for round ${round}:`, distribution);
-      return distribution;
-    } catch (error) {
-      console.error(`Error fetching distribution for round ${round}:`, error);
-      throw error;
-    }
+        const distribution = await response.json();
+        console.log(
+          `📊 Fetched distribution for round ${round}:`,
+          distribution,
+        );
+        return distribution;
+      }),
+    );
   }
 
   // Finalize bets for a specific round - userId extracted from Bearer token on backend
@@ -436,24 +509,26 @@ export class APIManager {
   }
 
   // Get all rounds
-  static async getAllRounds() {
-    try {
-      const headers = getAuthHeaders();
-      if (!headers) return []; // Redirect triggered
+  static async getAllRounds(signal?: AbortSignal) {
+    return requestDeduplicator.deduplicate("allRounds", () =>
+      retryWithBackoff(async () => {
+        const headers = getAuthHeaders();
+        if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/rounds/all`, {
-        headers,
-      });
+        const response = await fetch(`${API_BASE_URL}/rounds/all`, {
+          headers,
+          signal,
+        });
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch all rounds");
-      }
+        if (!response.ok) {
+          const error: any = new Error("Failed to fetch all rounds");
+          error.status = response.status;
+          throw error;
+        }
 
-      return await response.json();
-    } catch (error) {
-      console.error("Error fetching all rounds:", error);
-      throw error;
-    }
+        return await response.json();
+      }),
+    );
   }
 
   // Get latest round
@@ -477,25 +552,61 @@ export class APIManager {
     }
   }
 
-  // Get matches for a specific round
-  static async getMatchesForRound(round: number) {
+  /**
+   * Sync open Svenska Spel draws against the database and return the definitive
+   * latest SPRoundNum. Called once when the user navigates to /rounds.
+   * Returns null on any error — callers should fall back to the pre-loaded currentRound.
+   */
+  static async getLatestSyncedRound(): Promise<number | null> {
     try {
       const headers = getAuthHeaders();
-      if (!headers) return []; // Redirect triggered
+      if (!headers) return null; // Redirect already triggered
 
-      const response = await fetch(`${API_BASE_URL}/matches/${round}`, {
+      const response = await fetch(`${API_BASE_URL}/round/latest-synced`, {
         headers,
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch matches for round ${round}`);
+        throw new Error(`Failed to sync rounds: ${response.status}`);
       }
 
-      return await response.json();
+      const data: LatestSyncedRound = await response.json();
+      console.log(
+        `✅ Round sync complete. Latest: ${data.LatestSPRoundNum}, New rounds: ${data.NewRoundsCreated}`,
+      );
+      return data.LatestSPRoundNum;
     } catch (error) {
-      console.error(`Error fetching matches for round ${round}:`, error);
-      throw error;
+      console.error(
+        "❌ Round sync failed, falling back to cached latest:",
+        error,
+      );
+      return null;
     }
+  }
+
+  // Get matches for a specific round
+  static async getMatchesForRound(round: number, signal?: AbortSignal) {
+    return requestDeduplicator.deduplicate(`matches-${round}`, () =>
+      retryWithBackoff(async () => {
+        const headers = getAuthHeaders();
+        if (!headers) return []; // Redirect triggered
+
+        const response = await fetch(`${API_BASE_URL}/matches/${round}`, {
+          headers,
+          signal,
+        });
+
+        if (!response.ok) {
+          const error: any = new Error(
+            `Failed to fetch matches for round ${round}`,
+          );
+          error.status = response.status;
+          throw error;
+        }
+
+        return await response.json();
+      }),
+    );
   }
 
   // Get results for a specific round
@@ -547,7 +658,7 @@ export class APIManager {
   }
 
   // Get base statistics for all rounds in a specific year
-  static async getBaseStatsForYear(year: number, userId?: string) {
+  static async getBaseStatsForYear(year: number) {
     try {
       console.log(`📊 Fetching base stats for year ${year}...`);
 

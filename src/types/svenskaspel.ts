@@ -1,5 +1,22 @@
 // Svenska Spel API Contracts
 
+export interface SessionInfo {
+  sessionId: string;
+  // Add other session fields as discovered from API responses
+}
+
+export interface SessionUser {
+  userId: string;
+  username?: string;
+  // Add other user fields as discovered from API responses
+}
+
+export interface ClientInfo {
+  platform?: string;
+  version?: string;
+  // Add other client fields as discovered from API responses
+}
+
 export interface SvenskaSpelResponse {
   draw: DrawInfo;
   error: string | null;
@@ -10,9 +27,9 @@ export interface SvenskaSpelResponse {
   requestId: string;
   sessionId: string | null;
   deviceId: string;
-  session: any | null;
-  sessionUser: any | null;
-  clientInfo: any | null;
+  session: SessionInfo | null;
+  sessionUser: SessionUser | null;
+  clientInfo: ClientInfo | null;
 }
 
 export interface SvenskaSpelResultResponse {
@@ -25,9 +42,9 @@ export interface SvenskaSpelResultResponse {
   requestId: string;
   sessionId: string | null;
   deviceId: string;
-  session: any | null;
-  sessionUser: any | null;
-  clientInfo: any | null;
+  session: SessionInfo | null;
+  sessionUser: SessionUser | null;
+  clientInfo: ClientInfo | null;
 }
 
 export interface ResultInfo {
@@ -61,11 +78,17 @@ export interface WinnerDistribution {
   name: string; // e.g., "13 rätt", "12 rätt"
 }
 
+export interface FundInfo {
+  amount: string;
+  currency?: string;
+  // Add other fund fields as discovered from API responses
+}
+
 export interface DrawInfo {
   drawComment: string;
   extraInfo: string | null;
   drawState: string;
-  fund: any | null;
+  fund: FundInfo | null;
   lastDateWithoutTimeOfDay: string;
   events: DrawEvent[];
   jackpotItems: JackpotItem[];
@@ -85,6 +108,13 @@ export interface JackpotItem {
   amount: string;
 }
 
+export interface OutcomesInfo {
+  home?: string;
+  draw?: string;
+  away?: string;
+  // Add other outcome fields as discovered from API responses
+}
+
 export interface DrawEvent {
   eventNumber: number;
   description: string;
@@ -92,7 +122,7 @@ export interface DrawEvent {
   extraInfo: string | null;
   eventTypeDescription: string;
   participantType: string;
-  outcomes: any | null;
+  outcomes: OutcomesInfo | null;
   odds: Odds | null;
   distribution: Distribution;
   newspaperAdvice: NewspaperAdvice;
@@ -101,11 +131,11 @@ export interface DrawEvent {
   sportEventId: number;
   sportEventStart: string;
   sportEventStatus: string;
-  favouriteOdds: any | null;
+  favouriteOdds: Odds | null;
   startOdds: Odds | null;
   randomResultProbability: RandomResultProbability;
-  complementaryOdds: any | null;
-  complementaryFavouriteOdds: any | null;
+  complementaryOdds: Odds | null;
+  complementaryFavouriteOdds: Odds | null;
   providerIds: ProviderId[];
   outcomeScore?: string; // e.g., "1-0" for finished matches
 }

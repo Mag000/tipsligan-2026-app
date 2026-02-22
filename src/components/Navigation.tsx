@@ -14,6 +14,7 @@ import {
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { clearAuthToken } from "../utils/authHelpers";
 
 const useStyles = makeStyles({
   // Top navigation bar (desktop)
@@ -191,7 +192,8 @@ export function Navigation() {
   };
 
   const handleLogout = () => {
-    //logout();
+    clearAuthToken();
+    setIsSidebarOpen(false); // Close sidebar on mobile
     navigate("/login");
   };
 

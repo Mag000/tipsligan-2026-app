@@ -20,11 +20,9 @@ import {
   News24Regular,
 } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { PageContainer } from "../components/PageContainer";
 import { CommentsService, NewsComment } from "../services/CommentsService";
 import { NewsArticle, NewsService } from "../services/NewsService";
-import { getCurrentUsername } from "../utils/authHelpers";
 
 const useStyles = makeStyles({
   header: {
@@ -170,7 +168,6 @@ const useStyles = makeStyles({
 
 export default function Home() {
   const styles = useStyles();
-  const navigate = useNavigate();
   const [selectedNewsId, setSelectedNewsId] = useState<string | null>(null);
   const [allNews, setAllNews] = useState<NewsArticle[]>([]);
   const [selectedChronicle, setSelectedChronicle] =
@@ -182,7 +179,6 @@ export default function Home() {
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [newCommentText, setNewCommentText] = useState("");
-  const currentUsername = getCurrentUsername();
 
   // Load all news and comments on mount
   useEffect(() => {
@@ -470,9 +466,6 @@ export default function Home() {
             ) : chronicleComments.length > 0 ? (
               <div className={styles.commentsList}>
                 {chronicleComments.map((comment) => {
-                  const isOwner =
-                    currentUsername?.toLowerCase() ===
-                    comment.CreatedBy.toLowerCase();
                   const isEditing = editingCommentId === comment.Id;
 
                   return (
@@ -526,24 +519,23 @@ export default function Home() {
                               )}
                             </span>
                           </div>
-                          {isOwner && (
-                            <div className={styles.commentActions}>
-                              <Button
-                                size="small"
-                                appearance="subtle"
-                                icon={<EditRegular />}
-                                onClick={() =>
-                                  handleEditComment(comment.Id, comment.Text)
-                                }
-                              />
-                              <Button
-                                size="small"
-                                appearance="subtle"
-                                icon={<DeleteRegular />}
-                                onClick={() => handleDeleteComment(comment.Id)}
-                              />
-                            </div>
-                          )}
+
+                          <div className={styles.commentActions}>
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              icon={<EditRegular />}
+                              onClick={() =>
+                                handleEditComment(comment.Id, comment.Text)
+                              }
+                            />
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              icon={<DeleteRegular />}
+                              onClick={() => handleDeleteComment(comment.Id)}
+                            />
+                          </div>
                         </>
                       )}
                     </div>

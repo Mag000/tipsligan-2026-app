@@ -1,0 +1,419 @@
+openapi: 3.0.3
+info:
+  title: Chronicle API
+  description: |-
+    API endpoints for managing chronicle entries (admin announcements/news) on the Tipsligan 2026 start page.
+
+    **Authentication**: All endpoints require Bearer token in Authorization header.
+
+    **Admin Permissions**: Create, update, and delete operations require admin role.
+  version: 1.0.0
+  contact:
+    name: Tipsligan 2026 Development Team
+
+servers:
+  - url: http://localhost:52259/api
+    description: Local development server
+
+tags:
+  - name: Chronicle
+    description: Chronicle entry management operations
+
+paths:
+  /chronicle:
+    get:
+      tags:
+        - Chronicle
+      summary: Get all chronicle entries
+      description: Retrieve all chronicle entries in reverse chronological order (newest first). Available to all authenticated users.
+      operationId: getAllChronicleEntries
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Successfully retrieved chronicle entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChronicleEntriesResponse"
+              example:
+                entries:
+                  - id: 1
+                    title: "Welcome to Season 2026"
+                    content: "<p>We're excited to announce the start of the 2026 betting season!</p>"
+                    authorId: 5
+                    authorAlias: "AdminUser"
+                    createdDate: "2026-02-19T14:30:00Z"
+                    commentCount: 3
+                  - id: 2
+                    title: "Rule Changes for 2026"
+                    content: "<p>Please review the <strong>updated betting rules</strong>.</p>"
+                    authorId: 5
+                    authorAlias: "AdminUser"
+                    createdDate: "2026-02-18T10:15:00Z"
+                    lastEditedDate: "2026-02-18T12:00:00Z"
+                    editedById: 5
+                    editedByAlias: "AdminUser"
+                    commentCount: 7
+                totalCount: 2
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags:
+        - Chronicle
+      summary: Create new chronicle entry (admin only)
+      description: Create a new chronicle entry. Requires admin role.
+      operationId: createChronicleEntry
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChronicleEntryRequest"
+            example:
+              title: "Upcoming Maintenance"
+              content: "<p>The site will undergo <strong>scheduled maintenance</strong> on Friday.</p><ul><li>Downtime: 2 hours</li><li>Start: 22:00</li></ul>"
+      responses:
+        "201":
+          description: Chronicle entry created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChronicleEntry"
+              example:
+                id: 3
+                title: "Upcoming Maintenance"
+                content: "<p>The site will undergo <strong>scheduled maintenance</strong> on Friday.</p><ul><li>Downtime: 2 hours</li><li>Start: 22:00</li></ul>"
+                authorId: 5
+                authorAlias: "AdminUser"
+                createdDate: "2026-02-19T15:00:00Z"
+                commentCount: 0
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /chronicle/{id}:
+    get:
+      tags:
+        - Chronicle
+      summary: Get chronicle entry by ID
+      description: Retrieve a single chronicle entry by its ID. Available to all authenticated users.
+      operationId: getChronicleEntryById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Chronicle entry ID
+          schema:
+            type: integer
+            format: int32
+            example: 1
+      responses:
+        "200":
+          description: Successfully retrieved chronicle entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChronicleEntry"
+              example:
+                id: 1
+                title: "Welcome to Season 2026"
+                content: "<p>We're excited to announce the start of the 2026 betting season!</p>"
+                authorId: 5
+                authorAlias: "AdminUser"
+                createdDate: "2026-02-19T14:30:00Z"
+                commentCount: 3
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    put:
+      tags:
+        - Chronicle
+      summary: Update chronicle entry (admin only)
+      description: Update an existing chronicle entry. Requires admin role. Sets LastEditedDate and EditedById.
+      operationId: updateChronicleEntry
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Chronicle entry ID to update
+          schema:
+            type: integer
+            format: int32
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChronicleEntryRequest"
+            example:
+              title: "Welcome to Season 2026 (Updated)"
+              content: "<p>We're <strong>very</strong> excited to announce the start of the 2026 betting season!</p>"
+      responses:
+        "200":
+          description: Chronicle entry updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChronicleEntry"
+              example:
+                id: 1
+                title: "Welcome to Season 2026 (Updated)"
+                content: "<p>We're <strong>very</strong> excited to announce the start of the 2026 betting season!</p>"
+                authorId: 5
+                authorAlias: "AdminUser"
+                createdDate: "2026-02-19T14:30:00Z"
+                lastEditedDate: "2026-02-19T16:00:00Z"
+                editedById: 5
+                editedByAlias: "AdminUser"
+                commentCount: 3
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    delete:
+      tags:
+        - Chronicle
+      summary: Delete chronicle entry (admin only)
+      description: |-
+        Delete a chronicle entry and all associated comments (cascade delete). Requires admin role.
+
+        **Warning**: This operation is irreversible and will delete all comments on this entry.
+      operationId: deleteChronicleEntry
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Chronicle entry ID to delete
+          schema:
+            type: integer
+            format: int32
+            example: 1
+      responses:
+        "204":
+          description: Chronicle entry deleted successfully (no content returned)
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/login endpoint
+
+  schemas:
+    ChronicleEntry:
+      type: object
+      required:
+        - id
+        - title
+        - content
+        - authorId
+        - authorAlias
+        - createdDate
+      properties:
+        id:
+          type: integer
+          format: int32
+          description: Unique chronicle entry identifier
+          example: 1
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Chronicle entry headline
+          example: "Welcome to Season 2026"
+        content:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Rich text content (sanitized HTML)
+          example: "<p>We're excited to announce the start!</p>"
+        authorId:
+          type: integer
+          format: int32
+          description: User ID of the creator (admin)
+          example: 5
+        authorAlias:
+          type: string
+          description: Display name of the creator
+          example: "AdminUser"
+        createdDate:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of creation
+          example: "2026-02-19T14:30:00Z"
+        lastEditedDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO 8601 timestamp of last edit (null if never edited)
+          example: "2026-02-19T16:00:00Z"
+        editedById:
+          type: integer
+          format: int32
+          nullable: true
+          description: User ID of last editor (null if never edited)
+          example: 5
+        editedByAlias:
+          type: string
+          nullable: true
+          description: Display name of last editor
+          example: "AdminUser"
+        commentCount:
+          type: integer
+          format: int32
+          description: Number of comments on this entry (optional, for display)
+          example: 3
+
+    CreateChronicleEntryRequest:
+      type: object
+      required:
+        - title
+        - content
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Chronicle entry headline
+          example: "Upcoming Maintenance"
+        content:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Rich text content (will be sanitized on backend)
+          example: "<p>Maintenance scheduled for Friday.</p>"
+
+    UpdateChronicleEntryRequest:
+      type: object
+      required:
+        - title
+        - content
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Updated chronicle entry headline
+          example: "Upcoming Maintenance (Rescheduled)"
+        content:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Updated rich text content (will be sanitized on backend)
+          example: "<p>Maintenance rescheduled to Saturday.</p>"
+
+    ChronicleEntriesResponse:
+      type: object
+      required:
+        - entries
+        - totalCount
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChronicleEntry"
+          description: Array of chronicle entries
+        totalCount:
+          type: integer
+          format: int32
+          description: Total number of chronicle entries
+          example: 10
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Error message
+          example: "Validation failed"
+        details:
+          type: string
+          description: Additional error details
+          example: "Title must be between 1 and 200 characters"
+
+  responses:
+    BadRequestError:
+      description: Invalid request (validation failed)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            message: "Validation failed"
+            details: "Title must not be empty"
+
+    UnauthorizedError:
+      description: Authentication required (missing or invalid token)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            message: "Authorization header missing or invalid"
+
+    ForbiddenError:
+      description: Insufficient permissions (admin role required)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            message: "Admin role required for this operation"
+
+    NotFoundError:
+      description: Chronicle entry not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            message: "Chronicle entry with ID 999 not found"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            message: "An unexpected error occurred"

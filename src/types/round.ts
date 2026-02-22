@@ -29,8 +29,13 @@ export interface MatchesSetDTO {
 }
 
 export interface BettingsSetDTO {
-  // Add betting properties as needed
-  [key: string]: any;
+  Id: number;
+  aspnet_UsersUserId: string;
+  matchesSet_Id: number;
+  Bet: string;
+  Safe: boolean;
+  Final: boolean;
+  // Add other betting properties as discovered
 }
 
 // Request payload for creating a new round from Svenska Spel draw

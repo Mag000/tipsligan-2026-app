@@ -82,31 +82,23 @@ export const isAuthenticated = (): boolean => {
   return !!token;
 };
 
-interface User {
-  userId: number;
-  username: string;
-  token: string;
-}
-
-interface AuthState {
-  user: User | null;
-  isLoading: boolean;
-  error: string | null;
-  isAuthenticated: boolean;
-}
-
 /**
- * Get the current user's username from localStorage
+ * Clear authentication token from localStorage and reset redirect flag
+ *
+ * Call this when user logs out to ensure clean session termination.
+ * This function only removes the authentication token, preserving any
+ * other data stored in localStorage (unlike localStorage.clear()).
+ *
+ * @example
+ * ```typescript
+ * const handleLogout = () => {
+ *   clearAuthToken();
+ *   navigate("/login");
+ * };
+ * ```
  */
-export const getCurrentUsername = (): string | null => {
-  try {
-    const userData = localStorage.getItem("token");
-    if (userData) {
-      const parsed = JSON.parse(atob(userData));
-      return parsed.username || null;
-    }
-  } catch (error) {
-    console.error("Failed to get username:", error);
-  }
-  return null;
+export const clearAuthToken = (): void => {
+  console.log("🚪 Clearing authentication token...");
+  localStorage.removeItem("token");
+  resetRedirectFlag();
 };

@@ -17,6 +17,8 @@ import { PageContainer } from "../components/PageContainer";
 
 import { PageHeader } from "../components/PageHeader";
 import { useGlobalStyles } from "../styles/globalStyles";
+import { clearAuthToken } from "../utils/authHelpers";
+import { decodeAuthToken, getStoredAuthToken } from "../utils/authToken";
 
 const useStyles = makeStyles({
   avatar: {
@@ -45,12 +47,12 @@ export default function Profile() {
   const globalStyles = useGlobalStyles();
   const navigate = useNavigate();
   const handleLogout = () => {
-    console.log("🚪 Logging out...");
+    clearAuthToken();
     navigate("/login");
   };
 
-  const userToken = localStorage.getItem("userToken");
-  const user = userToken ? JSON.parse(atob(userToken.split(".")[1])) : null;
+  const userToken = getStoredAuthToken();
+  const user = userToken ? decodeAuthToken(userToken) : null;
 
   return (
     <PageContainer>

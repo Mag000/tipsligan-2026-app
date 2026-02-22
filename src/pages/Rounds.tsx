@@ -16,10 +16,17 @@ import {
   shorthands,
   Spinner,
   Title1,
+  Toast,
+  ToastBody,
+  Toaster,
+  ToastTitle,
   tokens,
   Tooltip,
+  useId,
+  useToastController,
 } from "@fluentui/react-components";
 import {
+  ArrowSync20Regular,
   ChevronDownRegular,
   ChevronRightRegular,
   DismissRegular,
@@ -27,10 +34,11 @@ import {
   ShieldCheckmarkRegular,
   Sport24Regular,
 } from "@fluentui/react-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { PageContainer } from "../components/PageContainer";
 import { APIManager } from "../services/APIManager";
+import { Round, RoundData } from "../store/roundsSlice";
 
 import { useGlobalStyles } from "../styles/globalStyles";
 import { DrawEvent, Participant } from "../types/svenskaspel";
@@ -328,25 +336,6 @@ interface UserBet {
   isFinalized: boolean;
 }
 
-interface RoundData {
-  drawInfo: any;
-  userBets: Record<number, UserBet>;
-  safeMatchNumber: number | null;
-  isFinalized: boolean;
-  allUsersBets: Record<string, Record<number, UserBet>>;
-  distribution: Record<number, { "1": number; X: number; "2": number }>;
-}
-
-interface Round {
-  id?: number;
-  SPRoundNum: number;
-  Year: number;
-  Week: number;
-  Month?: number;
-  Comment?: string;
-  Finished?: boolean;
-}
-
 interface RoundProps {
   currentRound: number | null;
   roundData?: RoundData;
@@ -361,7 +350,6 @@ export default function Rounds(props: RoundProps) {
   const { round: urlRound } = useParams<{ round: string }>();
 
   // UI-only state
-  const [loading, setLoading] = useState(false);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [matchFinalizeDialog, setMatchFinalizeDialog] = useState<number | null>(
     null,
@@ -372,12 +360,16 @@ export default function Rounds(props: RoundProps) {
   const [betFilters, setBetFilters] = useState<
     Record<number, "1" | "X" | "2" | null>
   >({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Toast setup
+  const toasterId = useId("toaster");
+  const { dispatchToast } = useToastController(toasterId);
 
   // Hardcoded admin status (set to false for now)
   const isAdmin = false;
 
   // Extract data from props
-  const matches: DrawEvent[] = props.roundData?.drawInfo?.draw?.events || [];
   const userBets = props.roundData?.userBets || {};
   const safeMatchNumber = props.roundData?.safeMatchNumber || null;
   const isFinalized = props.roundData?.isFinalized || false;
@@ -451,19 +443,9 @@ export default function Rounds(props: RoundProps) {
     }
 
     const currentBet = userBets[eventNumber];
-    let newBets: Array<"1" | "X" | "2">;
 
     if (currentBet) {
-      if (currentBet.bets.includes(betType)) {
-        // Remove bet
-        newBets = currentBet.bets.filter((b) => b !== betType);
-      } else {
-        // Add bet
-        newBets = [...currentBet.bets, betType];
-      }
-    } else {
-      // New bet
-      newBets = [betType];
+      // Bets are managed by backend and reloaded
     }
 
     // Save to backend
@@ -507,6 +489,42 @@ export default function Rounds(props: RoundProps) {
       console.error("Failed to update safe match:", error);
     }
   };
+
+  // Handle manual refresh
+  const handleRefresh = useCallback(async () => {
+    if (!props.currentRound) {
+      console.error("❌ No current round to refresh");
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      await props.loadRoundData(props.currentRound, true);
+
+      // Show success toast
+      dispatchToast(
+        <Toast>
+          <ToastTitle>Data refreshed</ToastTitle>
+        </Toast>,
+        { intent: "success", timeout: 2000 },
+      );
+
+      console.log(`✅ Round ${props.currentRound} data refreshed`);
+    } catch (error) {
+      console.error("❌ Failed to refresh data:", error);
+
+      // Show error toast
+      dispatchToast(
+        <Toast>
+          <ToastTitle>Failed to refresh data</ToastTitle>
+          <ToastBody>Please try again.</ToastBody>
+        </Toast>,
+        { intent: "error" },
+      );
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [props, dispatchToast]);
 
   // Handle finalize
   const handleFinalizeRound = async () => {
@@ -559,9 +577,6 @@ export default function Rounds(props: RoundProps) {
       console.error("Failed to finalize match:", error);
     }
   };
-
-  // Handle user selection
-  const handleUserSelect = (_: any, data: any) => {};
 
   // Get match status and result
   const getMatchStatus = (event: DrawEvent) => {
@@ -629,8 +644,8 @@ export default function Rounds(props: RoundProps) {
     return tips;
   };
 
-  // Render loading state
-  if (loading) {
+  // Render loading state (when data is being fetched)
+  if (props.roundData?.loading || isRefreshing) {
     return (
       <PageContainer>
         <div className={globalStyles.loadingContainer}>
@@ -706,8 +721,23 @@ export default function Rounds(props: RoundProps) {
               Avslutad
             </Badge>
           )}
+          {props.roundData?.drawInfo?.draw?.drawState &&
+            props.roundData.drawInfo.draw.drawState.toLowerCase() !==
+              "open" && (
+              <Button
+                appearance="primary"
+                icon={<ArrowSync20Regular />}
+                onClick={handleRefresh}
+                disabled={isRefreshing || props.roundData?.loading}
+                style={{ marginLeft: "auto" }}
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh Round Data"}
+              </Button>
+            )}
         </div>
       </div>
+
+      <Toaster toasterId={toasterId} />
 
       <div className={globalStyles.list}>
         {props.roundData &&
@@ -1372,7 +1402,9 @@ export default function Rounds(props: RoundProps) {
       {matchFinalizeDialog !== null && (
         <Dialog
           open={true}
-          onOpenChange={(e, data) => !data.open && setMatchFinalizeDialog(null)}
+          onOpenChange={(_e, data) =>
+            !data.open && setMatchFinalizeDialog(null)
+          }
         >
           <DialogSurface>
             <DialogBody>

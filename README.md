@@ -7,11 +7,14 @@ A modern React application built with TypeScript, FluentUI 9, and React Router f
 - ✅ **FluentUI 9** - Modern Microsoft design system with beautiful components
 - ✅ **Fully Responsive** - Perfect on desktop, tablet, and mobile devices
 - ✅ **Burger Menu** - Mobile-friendly navigation with smooth drawer animation
-- ✅ **React Router 6** - Modern client-side routing with protected routes
+- ✅ **React Router 7** - Modern client-side routing with protected routes
 - ✅ **Login System** - Secure username/password authentication
 - ✅ **TypeScript** - 100% type-safe codebase with zero compile errors
 - ✅ **Session Management** - Persistent login state across page refreshes
 - ✅ **Modern Architecture** - Clean separation of concerns
+- ✅ **Weekly Betting** - Full-featured Stryktipset betting system with real-time validation
+- ✅ **Redux State Management** - Efficient state management with Redux Toolkit
+- ✅ **Request Deduplication** - Optimized API calls per Constitution Principle VI
 
 ## 🚀 Quick Start
 
@@ -91,8 +94,164 @@ tipsligan-2026-app/
 - **Home** - Dashboard with welcome message
 - **Standings** - League standings view
 - **Matches** - Match schedule
+- **Betting** - Weekly Stryktipset betting interface (NEW ✨)
 - **Profile** - User account details
 - **Logout** - Session termination
+
+## ⚽ Weekly Betting Feature
+
+### Overview
+
+The betting feature allows users to place predictions on weekly Stryktipset rounds with 13 football matches. Built with Redux Toolkit, the feature provides real-time validation, deadline enforcement, and historical results viewing.
+
+### Key Capabilities
+
+#### 1. View Current Round (User Story 1)
+
+- Display all 13 matches from the current Stryktipset round
+- Show match details: home team, away team, league, kickoff time
+- Real-time countdown to betting deadline
+- Match status tracking (scheduled, in progress, finished)
+- Automatic data refresh with request deduplication
+
+#### 2. Place Bets (User Story 2)
+
+- Interactive 1/X/2 buttons for each match (44x44px touch targets)
+- Selection counter showing "X of 13 selected"
+- Form validation requiring all 13 selections
+- Submit button disabled until complete
+- Deadline enforcement (form disabled when deadline passed)
+- Success/error feedback with MessageBar components
+- Optimistic UI updates
+
+#### 3. View Past Results (User Story 4)
+
+- Round selector dropdown to switch between current and historical rounds
+- Display final match scores and outcomes
+- Correct/incorrect indicators (✓/✗) comparing predictions to results
+- Results summary showing "Correct: X of 13"
+- Visual highlighting of user predictions with ★ star icon
+- Read-only mode for completed rounds
+
+### Technical Implementation
+
+#### State Management
+
+```typescript
+// Redux store structure
+interface BettingState {
+  currentRound: BettingRound | null;
+  draftSelections: Record<number, Outcome>; // matchNumber -> '1'|'X'|'2'
+  submittedBet: UserBet | null;
+  historicalRounds: Record<number, BettingRound>;
+  historicalBets: Record<number, UserBet>;
+  // Loading and error states...
+}
+```
+
+#### API Integration
+
+- **GET /drawInfo/{roundNumber}** - Fetch current round with 13 matches
+- **GET /drawResult/{roundNumber}** - Fetch results for completed rounds
+- **POST /bets/{roundNumber}** - Submit or update user bet
+- **GET /bets/{roundNumber}/user** - Fetch user's existing bet
+
+All API calls use `requestDeduplicator` to prevent duplicate requests (Constitution Principle VI).
+
+#### Components Architecture
+
+```
+BettingPage (Container)
+├── RoundSelector (Dropdown for current/historical)
+├── DeadlineCountdown (Real-time countdown timer)
+├── BetSummary (Selection counter / Results summary)
+├── BettingForm (Validation & submit logic)
+│   └── MatchCard[] (13 match cards with 1/X/2 buttons)
+└── MatchCardSkeleton[] (Loading state)
+```
+
+### Betting Workflow
+
+```
+1. Navigate to /betting
+   ↓
+2. Fetch current Stryktipset round (Redux: fetchCurrentRound)
+   ↓
+3. Display 13 matches with deadline countdown
+   ↓
+4. User selects predictions (Redux: setSelection)
+   ↓
+5. Selection counter updates (X of 13 selected)
+   ↓
+6. Submit button enables when complete
+   ↓
+7. Submit bet (Redux: submitBet)
+   ↓
+8. Success confirmation displayed
+   ↓
+9. User can modify until deadline
+```
+
+### Mobile Responsiveness
+
+- Touch targets: 44x44px minimum (per accessibility guidelines)
+- Single-column layout on mobile (<768px)
+- Responsive breakpoints: 320px, 375px, 768px
+- Optimized for throttled networks (Slow 3G <3s load time)
+
+### Accessibility Features
+
+- ARIA labels on all interactive buttons
+- Keyboard navigation support
+- Screen reader friendly
+- High contrast indicator colors (green ✓, red ✗)
+- Clear visual feedback for all states
+
+### Performance Optimizations
+
+- Request deduplication with cache keys
+- Skeleton screens during initial load
+- Lazy loading of historical rounds
+- Optimistic UI updates
+- Minimal re-renders with Redux selectors
+
+### Error Handling
+
+- Retry buttons on failed API calls
+- Graceful degradation on network errors
+- User-friendly error messages
+- Deadline enforcement with clear messaging
+- Form validation with specific error feedback
+
+### Files Modified/Created
+
+```
+src/
+├── components/betting/
+│   ├── BettingPage.tsx        # Main container
+│   ├── MatchCard.tsx          # Match display with results
+│   ├── MatchCardSkeleton.tsx  # Loading state
+│   ├── BettingForm.tsx        # Form wrapper
+│   ├── BetSummary.tsx         # Counter/Results
+│   └── DeadlineCountdown.tsx  # Timer
+├── store/
+│   ├── bettingSlice.ts        # Redux state & thunks
+│   └── store.ts               # Store configuration
+├── hooks/
+│   └── useBetting.ts          # Custom hook
+├── utils/
+│   └── bettingValidation.ts   # Validation helpers
+├── types/
+│   └── betting.ts             # TypeScript types
+└── services/
+    └── APIManager.ts          # API methods (updated)
+```
+
+### Route
+
+**Path**: `/betting`
+**Protected**: Yes (requires authentication)
+**Status**: ✅ Complete and production-ready
 
 ## 🔐 Authentication Flow
 
