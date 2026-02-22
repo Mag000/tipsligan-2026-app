@@ -1,11 +1,13 @@
 import { Body1, Card, makeStyles, Spinner } from "@fluentui/react-components";
 import { Trophy24Regular } from "@fluentui/react-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageContainer } from "../components/PageContainer";
 import { PageHeader } from "../components/PageHeader";
 import { StandingsTable } from "../components/StandingsTable";
 import { APIManager } from "../services/APIManager";
+import { BaseStat } from "../services/StandingsCalculationService";
 import { useGlobalStyles } from "../styles/globalStyles";
+import { BackendUser } from "../types/backend";
 
 // No local styles needed - all moved to global
 const useStyles = makeStyles({});
@@ -15,21 +17,43 @@ export default function Standings() {
   const globalStyles = useGlobalStyles();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [baseStats, setBaseStats] = useState<any[]>([]);
+  const [baseStats, setBaseStats] = useState<BaseStat[]>([]);
+  const [userDisplayNames, setUserDisplayNames] = useState<
+    Record<string, string>
+  >({});
+  const isMounted = useRef(true);
 
   useEffect(() => {
-    const fetchStats = async () => {
+    isMounted.current = true;
+    const fetchAll = async () => {
       try {
         const currentYear = new Date().getFullYear();
-        const baseStatsData = await APIManager.getBaseStatsForYear(currentYear);
+        const [baseStatsData, usersData] = await Promise.all([
+          APIManager.getBaseStatsForYear(currentYear),
+          APIManager.getAllActiveUsers().catch(() => [] as BackendUser[]),
+        ]);
+        if (!isMounted.current) return;
         setBaseStats(baseStatsData);
+        const displayNames: Record<string, string> = {};
+        (usersData as BackendUser[]).forEach((user) => {
+          const uid = (user.UserId || user.userId || "")
+            .toString()
+            .toUpperCase();
+          const name = user.UserName || user.userName || "";
+          if (uid) displayNames[uid] = name;
+        });
+        setUserDisplayNames(displayNames);
         setLoading(false);
       } catch (err) {
+        if (!isMounted.current) return;
         setError(err instanceof Error ? err.message : "Failed to fetch stats");
         setLoading(false);
       }
     };
-    fetchStats();
+    fetchAll();
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
   if (loading) {
     return (
@@ -89,6 +113,7 @@ export default function Standings() {
           baseStats={baseStats}
           showToggle={true}
           defaultAdvanced={false}
+          userDisplayNames={userDisplayNames}
         />
       )}
     </PageContainer>

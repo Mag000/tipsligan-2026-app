@@ -644,35 +644,19 @@ export class APIManager {
       const allRounds = await this.getAllRounds();
       console.log(`📦 Retrieved ${allRounds.length} total rounds`, allRounds);
 
-      // Filter rounds by year
+      // Filter rounds by year — check Year (capitalized, canonical roundSet field) first
       const roundsForYear = allRounds.filter((round: any) => {
-        // Check if round has a year property
-        if (round.year) {
+        if (round.Year !== undefined) {
+          return round.Year === year;
+        }
+        if (round.year !== undefined) {
           return round.year === year;
         }
-        // If round has a date property, extract year from it
-        if (round.date) {
-          const roundYear = new Date(round.date).getFullYear();
-          return roundYear === year;
-        }
-        // If round has a drawDate property, extract year from it
-        if (round.drawDate) {
-          const roundYear = new Date(round.drawDate).getFullYear();
-          return roundYear === year;
-        }
-        // If round has startDate property, extract year from it
-        if (round.startDate) {
-          const roundYear = new Date(round.startDate).getFullYear();
-          return roundYear === year;
-        }
-        // If round has Deadline property, extract year from it
-        if (round.Deadline) {
-          const roundYear = new Date(round.Deadline).getFullYear();
-          return roundYear === year;
-        }
-        // If round has Year property (capitalize)
-        if (round.Year) {
-          return round.Year === year;
+        // Fallback: derive year from date fields
+        const dateSrc =
+          round.date || round.drawDate || round.startDate || round.Deadline;
+        if (dateSrc) {
+          return new Date(dateSrc).getFullYear() === year;
         }
         return false;
       });
@@ -683,17 +667,20 @@ export class APIManager {
       );
 
       // Extract round numbers/IDs and filter out invalid values
+      // SPRoundNum is the canonical Svenska Spel round identifier (int) the backend expects
       const roundIds = roundsForYear
         .map(
           (round: any) =>
+            round.SPRoundNum ||
+            round.spRoundNum ||
             round.roundNumber ||
             round.RoundNumber ||
-            round.id ||
-            round.Id ||
-            round.roundId ||
-            round.round,
+            round.roundId,
         )
-        .filter((id: any) => id !== undefined && id !== null);
+        .filter(
+          (id: any) =>
+            id !== undefined && id !== null && typeof id === "number",
+        );
 
       console.log(`📋 Round IDs to fetch:`, roundIds);
 

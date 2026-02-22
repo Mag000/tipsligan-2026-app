@@ -67,12 +67,12 @@ export class StandingsCalculationService {
    */
   static calculateStandings(
     baseStats: BaseStat[],
-    useNewRanking: boolean = true
+    useNewRanking: boolean = true,
   ): StandingsCounter[] {
     console.log(
       "🔢 Processing raw base stats:",
       baseStats.length,
-      "match records"
+      "match records",
     );
 
     // Calculate stats from raw match data
@@ -96,7 +96,7 @@ export class StandingsCalculationService {
    * Calculate user statistics from raw match records
    */
   private static calculateUserStatsFromMatches(
-    baseStats: BaseStat[]
+    baseStats: BaseStat[],
   ): StandingsCounter[] {
     // Group by user
     const userMatches = new Map<string, BaseStat[]>();
@@ -120,7 +120,7 @@ export class StandingsCalculationService {
    */
   private static calculateStatsForUser(
     userId: string,
-    matches: BaseStat[]
+    matches: BaseStat[],
   ): StandingsCounter {
     const counter: StandingsCounter = {
       userName: userId,
@@ -160,7 +160,7 @@ export class StandingsCalculationService {
       // Determine actual result
       const actualResult = this.getMatchResult(
         match.GoalsHome,
-        match.GoalsAway
+        match.GoalsAway,
       );
 
       // Check if bet was correct
@@ -206,7 +206,7 @@ export class StandingsCalculationService {
   private static updateBetTypeCounters(
     counter: StandingsCounter,
     bet: string,
-    isCorrect: boolean
+    isCorrect: boolean,
   ): void {
     const betLength = bet.length;
 
@@ -244,7 +244,7 @@ export class StandingsCalculationService {
   private static updateTotalCounters(
     counter: StandingsCounter,
     bet: string,
-    isCorrect: boolean
+    isCorrect: boolean,
   ): void {
     if (bet.includes("1")) {
       counter.total1Bets++;
@@ -267,7 +267,7 @@ export class StandingsCalculationService {
    */
   private static sortCounters(
     counters: StandingsCounter[],
-    useNewRanking: boolean
+    useNewRanking: boolean,
   ): StandingsCounter[] {
     return counters.sort((a, b) => {
       // Primary: Correct count (descending)
@@ -361,15 +361,43 @@ export class StandingsCalculationService {
   }
 
   /**
-   * Assign position numbers after sorting
+   * Assign position numbers after sorting.
+   * Players with identical stats across the full tie-breaking chain share the
+   * same position number; the next different player jumps to (index + 1).
+   * Example: [A, B(tie with A), C] → positions [1, 1, 3] not [1, 1, 2].
    */
   private static assignPositions(
-    counters: StandingsCounter[]
+    counters: StandingsCounter[],
   ): StandingsCounter[] {
-    return counters.map((counter, index) => ({
-      ...counter,
-      position: index + 1,
-    }));
+    let position = 1;
+    return counters.map((counter, index) => {
+      if (index > 0) {
+        const prev = counters[index - 1];
+        const isTied =
+          prev.correctCount === counter.correctCount &&
+          prev.correctSafeCount === counter.correctSafeCount &&
+          prev.totalXHits === counter.totalXHits &&
+          prev.total2Hits === counter.total2Hits &&
+          prev.singleXHits === counter.singleXHits &&
+          prev.single2Hits === counter.single2Hits &&
+          prev.single1Hits === counter.single1Hits &&
+          prev.hedgeX2Hits === counter.hedgeX2Hits &&
+          prev.hedge1XHits === counter.hedge1XHits &&
+          prev.hedge12Hits === counter.hedge12Hits &&
+          prev.singleXBets === counter.singleXBets &&
+          prev.single2Bets === counter.single2Bets &&
+          prev.hedgeX2Bets === counter.hedgeX2Bets &&
+          prev.hedge1XBets === counter.hedge1XBets &&
+          prev.hedge12Bets === counter.hedge12Bets;
+        if (!isTied) {
+          // Skip ahead to 1-based rank of this player (accounts for all tied
+          // players above who share an earlier position number)
+          position = index + 1;
+        }
+        // If tied, keep the same position as the previous player
+      }
+      return { ...counter, position };
+    });
   }
 
   /**

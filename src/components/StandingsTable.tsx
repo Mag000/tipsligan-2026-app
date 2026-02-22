@@ -10,6 +10,7 @@ import {
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import {
+  BaseStat,
   StandingsCalculationService,
   StandingsCounter,
 } from "../services/StandingsCalculationService";
@@ -166,15 +167,17 @@ const useStyles = makeStyles({
 });
 
 interface StandingsTableProps {
-  baseStats: any[];
+  baseStats: BaseStat[];
   showToggle?: boolean;
   defaultAdvanced?: boolean;
+  userDisplayNames: Record<string, string>;
 }
 
 export function StandingsTable({
   baseStats,
   showToggle = true,
   defaultAdvanced = false,
+  userDisplayNames,
 }: StandingsTableProps) {
   const styles = useStyles();
   const [showAdvanced, setShowAdvanced] = useState(defaultAdvanced);
@@ -191,7 +194,7 @@ export function StandingsTable({
   const standings: StandingsCounter[] =
     StandingsCalculationService.calculateStandings(
       baseStats,
-      StandingsCalculationService.shouldUseNewRanking()
+      StandingsCalculationService.shouldUseNewRanking(),
     );
 
   if (standings.length === 0) {
@@ -377,8 +380,8 @@ export function StandingsTable({
               isAfter3rd || isAfter10th || isAfter20th
                 ? styles.tableRowThickBorder
                 : isBeforeLast
-                ? styles.tableRowBeforeLast
-                : "";
+                  ? styles.tableRowBeforeLast
+                  : "";
 
             return (
               <div
@@ -438,7 +441,8 @@ export function StandingsTable({
                         : undefined,
                   }}
                 >
-                  {player.userName}
+                  {userDisplayNames[player.userName.toUpperCase()] ||
+                    player.userName}
                 </div>
                 <div
                   className={showAdvanced ? styles.statSmall : styles.stat}
