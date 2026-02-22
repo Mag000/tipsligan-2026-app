@@ -1,5 +1,10 @@
 import {
   Button,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   makeStyles,
   shorthands,
   tokens,
@@ -15,6 +20,7 @@ import {
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { clearAuthToken } from "../utils/authHelpers";
+import { getISOWeek, getSwedishMonthLabel } from "../utils/dateUtils";
 
 const useStyles = makeStyles({
   // Top navigation bar (desktop)
@@ -169,6 +175,23 @@ const useStyles = makeStyles({
     ...shorthands.padding("16px", "20px"),
     borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
   },
+  subNavItem: {
+    ...shorthands.padding("10px", "20px", "10px", "44px"),
+    display: "flex",
+    alignItems: "center",
+    ...shorthands.gap("12px"),
+    cursor: "pointer",
+    backgroundColor: "transparent",
+    ...shorthands.border("none"),
+    width: "100%",
+    textAlign: "left" as const,
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground2,
+    transition: "background-color 0.2s",
+    ":hover": {
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+    },
+  },
 });
 
 export function Navigation() {
@@ -176,6 +199,7 @@ export function Navigation() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isStandingsExpanded, setIsStandingsExpanded] = useState(false);
   // Determine which tab is active based on the current path
   const getActivePage = () => {
     const path = location.pathname;
@@ -198,6 +222,21 @@ export function Navigation() {
   };
 
   const activePage = getActivePage();
+  const navNow = new Date();
+  const navYear = navNow.getFullYear();
+  const navMonth = navNow.getMonth() + 1;
+  const navWeek = getISOWeek(navNow);
+  const standingsSubItems = [
+    { label: `Totalen ${navYear}`, path: "/standings/year" },
+    {
+      label: `Aktuell månad (${getSwedishMonthLabel(navMonth, navYear)})`,
+      path: "/standings/month",
+    },
+    {
+      label: `Aktuell vecka (v${navWeek} ${navYear})`,
+      path: "/standings/week",
+    },
+  ];
   const menuItems = [
     { id: "home", label: "Hem", icon: <Home24Regular />, path: "/" },
     {
@@ -205,13 +244,6 @@ export function Navigation() {
       label: "Omgångar",
       icon: <Sport24Regular />,
       path: "/rounds",
-    },
-
-    {
-      id: "standings",
-      label: "Tabell",
-      icon: <TrophyRegular />,
-      path: "/standings",
     },
     {
       id: "profile",
@@ -241,6 +273,34 @@ export function Navigation() {
                 <span>{item.label}</span>
               </button>
             ))}
+
+            {/* Standings submenu */}
+            <Menu>
+              <MenuTrigger disableButtonEnhancement>
+                <button
+                  className={`${styles.desktopNavItem} ${
+                    activePage === "standings"
+                      ? styles.desktopNavItemActive
+                      : ""
+                  }`}
+                >
+                  <TrophyRegular />
+                  <span>Tabeller</span>
+                </button>
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  {standingsSubItems.map((sub) => (
+                    <MenuItem
+                      key={sub.path}
+                      onClick={() => handleNavigate(sub.path)}
+                    >
+                      {sub.label}
+                    </MenuItem>
+                  ))}
+                </MenuList>
+              </MenuPopover>
+            </Menu>
           </div>
         </div>
 
@@ -297,6 +357,27 @@ export function Navigation() {
               <span>{item.label}</span>
             </button>
           ))}
+
+          {/* Standings expandable group */}
+          <button
+            className={`${styles.mobileNavItem} ${
+              activePage === "standings" ? styles.mobileNavItemActive : ""
+            }`}
+            onClick={() => setIsStandingsExpanded((prev) => !prev)}
+          >
+            <TrophyRegular />
+            <span>Tabeller {isStandingsExpanded ? "▲" : "▼"}</span>
+          </button>
+          {isStandingsExpanded &&
+            standingsSubItems.map((sub) => (
+              <button
+                key={sub.path}
+                className={styles.subNavItem}
+                onClick={() => handleNavigate(sub.path)}
+              >
+                <span>{sub.label}</span>
+              </button>
+            ))}
         </div>
 
         <div className={styles.sidebarFooter}>

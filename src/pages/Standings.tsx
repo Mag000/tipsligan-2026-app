@@ -1,6 +1,7 @@
-import { Body1, Card, makeStyles, Spinner } from "@fluentui/react-components";
+import { Body1, Card, Spinner } from "@fluentui/react-components";
 import { Trophy24Regular } from "@fluentui/react-icons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import { PageContainer } from "../components/PageContainer";
 import { PageHeader } from "../components/PageHeader";
 import { StandingsTable } from "../components/StandingsTable";
@@ -8,12 +9,9 @@ import { APIManager } from "../services/APIManager";
 import { BaseStat } from "../services/StandingsCalculationService";
 import { useGlobalStyles } from "../styles/globalStyles";
 import { BackendUser } from "../types/backend";
-
-// No local styles needed - all moved to global
-const useStyles = makeStyles({});
+import { getISOWeek, getSwedishMonthLabel } from "../utils/dateUtils";
 
 export default function Standings() {
-  const styles = useStyles();
   const globalStyles = useGlobalStyles();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,14 +20,36 @@ export default function Standings() {
     Record<string, string>
   >({});
   const isMounted = useRef(true);
+  const { scope } = useParams<{ scope: string }>();
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1; // 1-based
+
+  const { filteredStats, scopeLabel } = useMemo(() => {
+    if (scope === "month") {
+      return {
+        filteredStats: baseStats.filter((s) => s.Month === currentMonth),
+        scopeLabel: getSwedishMonthLabel(currentMonth, currentYear),
+      };
+    }
+    if (scope === "week") {
+      const currentISOWeek = getISOWeek(new Date());
+      return {
+        filteredStats: baseStats.filter((s) => s.Week === currentISOWeek),
+        scopeLabel: `Vecka ${currentISOWeek} \u2013 ${currentYear}`,
+      };
+    }
+    return {
+      filteredStats: baseStats,
+      scopeLabel: `Totalen ${currentYear}`,
+    };
+  }, [baseStats, scope, currentMonth, currentYear]);
 
   useEffect(() => {
     isMounted.current = true;
     const fetchAll = async () => {
       try {
-        const currentYear = new Date().getFullYear();
         const [baseStatsData, usersData] = await Promise.all([
-          APIManager.getBaseStatsForYear(currentYear),
+          APIManager.getBaseStatsForYear(new Date().getFullYear()),
           APIManager.getAllActiveUsers().catch(() => [] as BackendUser[]),
         ]);
         if (!isMounted.current) return;
@@ -61,7 +81,7 @@ export default function Standings() {
         <PageHeader
           icon={<Trophy24Regular fontSize={32} />}
           title="Ställningar"
-          subtitle="Aktuell ställning i tävlingen"
+          subtitle={scopeLabel}
         />
         <div className={globalStyles.loadingContainer}>
           <Spinner size="extra-large" />
@@ -77,7 +97,7 @@ export default function Standings() {
         <PageHeader
           icon={<Trophy24Regular fontSize={32} />}
           title="Ställningar"
-          subtitle="Aktuell ställning i tävlingen"
+          subtitle={scopeLabel}
         />
         <Card>
           <div className={globalStyles.emptyState}>
@@ -92,17 +112,17 @@ export default function Standings() {
       <PageHeader
         icon={<Trophy24Regular fontSize={32} />}
         title="Ställningar"
-        subtitle="Aktuell ställning i tävlingen"
+        subtitle={scopeLabel}
         stats={[
           {
             label: "Spelare",
-            value: baseStats?.length || 0,
+            value: filteredStats?.length || 0,
             color: "informative",
           },
         ]}
       />
 
-      {!baseStats || baseStats.length === 0 ? (
+      {!filteredStats || filteredStats.length === 0 ? (
         <Card>
           <div className={globalStyles.emptyState}>
             <Body1>Inga ställningar tillgängliga ännu</Body1>
@@ -110,10 +130,11 @@ export default function Standings() {
         </Card>
       ) : (
         <StandingsTable
-          baseStats={baseStats}
+          baseStats={filteredStats}
           showToggle={true}
           defaultAdvanced={false}
           userDisplayNames={userDisplayNames}
+          scopeLabel={scopeLabel}
         />
       )}
     </PageContainer>

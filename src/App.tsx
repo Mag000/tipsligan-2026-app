@@ -312,7 +312,11 @@ function App() {
             }
           />
 
-          <Route path="/standings" element={<Standings />} />
+          <Route path="/standings/:scope" element={<Standings />} />
+          <Route
+            path="/standings"
+            element={<Navigate replace to="/standings/year" />}
+          />
           <Route path="/profile" element={<Profile />} />
           <Route path="/betting" element={<Betting />} />
           {/* Redirect any unknown routes to home */}

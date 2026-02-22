@@ -171,6 +171,7 @@ interface StandingsTableProps {
   showToggle?: boolean;
   defaultAdvanced?: boolean;
   userDisplayNames: Record<string, string>;
+  scopeLabel?: string;
 }
 
 export function StandingsTable({
@@ -178,6 +179,7 @@ export function StandingsTable({
   showToggle = true,
   defaultAdvanced = false,
   userDisplayNames,
+  scopeLabel,
 }: StandingsTableProps) {
   const styles = useStyles();
   const [showAdvanced, setShowAdvanced] = useState(defaultAdvanced);
@@ -213,6 +215,18 @@ export function StandingsTable({
         >
           {showAdvanced ? "Visa enkel vy" : "Visa avancerad statistik"}
         </Button>
+      )}
+      {scopeLabel && (
+        <div
+          style={{
+            marginBottom: "8px",
+            fontSize: tokens.fontSizeBase200,
+            color: tokens.colorNeutralForeground2,
+            fontWeight: tokens.fontWeightSemibold,
+          }}
+        >
+          {scopeLabel}
+        </div>
       )}
 
       <div
