@@ -68,6 +68,17 @@ export interface BackendDistributionItem {
 }
 
 /**
+ * User entity from /api/users/all
+ * Maps to the aspnet_Users table returned by GetAllUsers()
+ */
+export interface BackendUser {
+  UserId: string;
+  userId?: string;
+  UserName: string;
+  userName?: string;
+}
+
+/**
  * Normalized distribution by match number
  */
 export interface DistributionByMatch {

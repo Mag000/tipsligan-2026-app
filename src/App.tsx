@@ -20,6 +20,7 @@ import Rounds from "./pages/Rounds";
 import Standings from "./pages/Standings";
 import { APIManager } from "./services/APIManager";
 import { Round, RoundData } from "./store/roundsSlice";
+import { BackendUser } from "./types/backend";
 import { roundSet } from "./types/round";
 import { getStoredAuthToken, getUserIdFromJwt } from "./utils/authToken";
 
@@ -110,9 +111,11 @@ function RoundsRedirect({
 function RoundsWrapper({
   availableRounds,
   userId,
+  userDisplayNames,
 }: {
   availableRounds: Round[];
   userId: string;
+  userDisplayNames: Record<string, string>;
 }) {
   const { round: urlRound } = useParams<{ round: string }>();
   const roundNumber = urlRound ? parseInt(urlRound, 10) : null;
@@ -122,6 +125,7 @@ function RoundsWrapper({
       currentRound={roundNumber}
       availableRounds={availableRounds}
       userId={userId}
+      userDisplayNames={userDisplayNames}
     />
   );
 }
@@ -131,6 +135,9 @@ function App() {
   const [currentRound, setCurrentRound] = useState<number | null>(null);
   const [availableRounds, setAvailableRounds] = useState<Round[]>([]);
   const [token, setToken] = useState<string | null>(getStoredAuthToken());
+  const [userDisplayNames, setUserDisplayNames] = useState<
+    Record<string, string>
+  >({});
 
   // Derive userId from the stored JWT token
   const userId = useMemo(() => {
@@ -207,6 +214,25 @@ function App() {
 
         setAvailableRounds(roundsWithData);
 
+        // Fetch userId → UserName map once for the whole app session
+        try {
+          const users: BackendUser[] = await APIManager.getAllActiveUsers();
+          const displayNames: Record<string, string> = {};
+          users.forEach((user) => {
+            const uid = (user.UserId || user.userId || "")
+              .toString()
+              .toUpperCase();
+            const name = user.UserName || user.userName || "";
+            if (uid) displayNames[uid] = name;
+          });
+          setUserDisplayNames(displayNames);
+          console.log(
+            `✅ Loaded ${Object.keys(displayNames).length} user display names`,
+          );
+        } catch (error) {
+          console.warn("⚠️ Could not fetch user display names:", error);
+        }
+
         // Set latest round as current
         if (roundsWithData.length > 0) {
           const latestRound = roundsWithData[0].SPRoundNum;
@@ -281,6 +307,7 @@ function App() {
               <RoundsWrapper
                 availableRounds={availableRounds}
                 userId={userId}
+                userDisplayNames={userDisplayNames}
               />
             }
           />

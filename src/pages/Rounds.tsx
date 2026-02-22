@@ -338,6 +338,7 @@ interface RoundProps {
   currentRound: number | null;
   availableRounds: Round[];
   userId: string;
+  userDisplayNames: Record<string, string>;
 }
 
 export default function Rounds(props: RoundProps) {
@@ -1473,9 +1474,21 @@ export default function Rounds(props: RoundProps) {
                             );
                           })()}
 
-                          {/* Other users */}
-                          {Object.keys(selectedUsersBets).map(
-                            (selectedUserId) => {
+                          {/* Other users — sorted A→Z by display name; unresolved names sort last */}
+                          {Object.keys(selectedUsersBets)
+                            .sort((a, b) => {
+                              const nameA =
+                                props.userDisplayNames[a] || "\uFFFF";
+                              const nameB =
+                                props.userDisplayNames[b] || "\uFFFF";
+                              const cmp = nameA.localeCompare(
+                                nameB,
+                                undefined,
+                                { sensitivity: "base" },
+                              );
+                              return cmp !== 0 ? cmp : a.localeCompare(b);
+                            })
+                            .map((selectedUserId) => {
                               const otherUserBet =
                                 selectedUsersBets[selectedUserId]?.[
                                   event.eventNumber
@@ -1507,6 +1520,10 @@ export default function Rounds(props: RoundProps) {
                                   key={selectedUserId}
                                   className={styles.userBetRow}
                                 >
+                                  <span className={styles.userName}>
+                                    {props.userDisplayNames[selectedUserId] ||
+                                      selectedUserId.substring(0, 8)}
+                                  </span>
                                   <div className={styles.betBoxesContainer}>
                                     {otherUserBet.isSafe && (
                                       <Tooltip
@@ -1555,8 +1572,7 @@ export default function Rounds(props: RoundProps) {
                                   </div>
                                 </div>
                               );
-                            },
-                          )}
+                            })}
                         </div>
                       </div>
                     )}
