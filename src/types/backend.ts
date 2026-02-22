@@ -37,6 +37,7 @@ export interface BackendBet {
   matchesSet_Id?: number;
   MatchId?: number;
   matchId?: number;
+  MatchNumber?: number;
   bet?: string;
   Bet?: string;
   tip?: string;

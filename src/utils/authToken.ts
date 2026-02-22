@@ -74,6 +74,32 @@ export function isTokenValid(token: string): boolean {
 }
 
 /**
+ * Extracts the userId from a JWT token (the format the backend returns).
+ * The backend uses JwtSecurityTokenHandler which maps ClaimTypes.NameIdentifier
+ * to the "nameid" claim key in the JWT payload.
+ */
+export function getUserIdFromJwt(token: string): string | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // Base64url → Base64: replace - with + and _ with /
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64));
+    // .NET JwtSecurityTokenHandler maps ClaimTypes.NameIdentifier → "nameid"
+    const userId =
+      payload["nameid"] ||
+      payload["sub"] ||
+      payload[
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"
+      ] ||
+      null;
+    return userId ? String(userId).toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Gets the auth token from localStorage
  */
 export function getStoredAuthToken(): string | null {
@@ -87,10 +113,14 @@ export function getStoredAuthToken(): string | null {
 }
 
 /**
- * Gets the userId from the stored auth token
+ * Gets the userId from the stored auth token (JWT-aware).
  */
 export function getStoredUserId(): string | null {
   const authToken = getStoredAuthToken();
   if (!authToken) return null;
+  // Try JWT format first (backend returns JWT)
+  const jwtUserId = getUserIdFromJwt(authToken);
+  if (jwtUserId) return jwtUserId;
+  // Fallback: legacy JSON payload format
   return getUserIdFromToken(authToken);
 }

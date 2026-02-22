@@ -38,7 +38,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { PageContainer } from "../components/PageContainer";
 import { APIManager } from "../services/APIManager";
-import { Round, RoundData } from "../store/roundsSlice";
+import { Round, RoundData, UserBet } from "../store/roundsSlice";
+import {
+  BackendBet,
+  BackendDistributionItem,
+  BackendMatch,
+} from "../types/backend";
+import { getStoredAuthToken, getUserIdFromJwt } from "../utils/authToken";
 
 import { useGlobalStyles } from "../styles/globalStyles";
 import { DrawEvent, Participant } from "../types/svenskaspel";
@@ -328,19 +334,10 @@ const useStyles = makeStyles({
   },
 });
 
-interface UserBet {
-  matchId: string;
-  eventNumber: number;
-  bets: Array<"1" | "X" | "2">;
-  isSafe: boolean;
-  isFinalized: boolean;
-}
-
 interface RoundProps {
   currentRound: number | null;
-  roundData?: RoundData;
-  loadRoundData: (round: number, force?: boolean) => Promise<void>;
   availableRounds: Round[];
+  userId: string;
 }
 
 export default function Rounds(props: RoundProps) {
@@ -361,6 +358,205 @@ export default function Rounds(props: RoundProps) {
     Record<number, "1" | "X" | "2" | null>
   >({});
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [roundsCache, setRoundsCache] = useState<Record<number, RoundData>>({});
+
+  const fetchRoundData = useCallback(
+    async (round: number, force: boolean = false) => {
+      if (!force && roundsCache[round]?.drawInfo) {
+        console.log(`✅ Round ${round} already loaded`);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        console.log(`🔍 Loading data for round ${round}...`);
+
+        // Fetch draw info
+        const drawInfo = await APIManager.getSvenskaSpelDrawInfo(round);
+
+        const shouldFetchResults =
+          drawInfo.draw.drawState?.toLowerCase() === "finalized" ||
+          drawInfo.draw.drawState?.toLowerCase() === "result";
+
+        if (shouldFetchResults) {
+          try {
+            const resultInfo = await APIManager.getSvenskaSpelDrawResult(round);
+            const resultEvents = resultInfo.result.events || [];
+            drawInfo.draw.events = drawInfo.draw.events.map((forecastEvent) => {
+              const resultEvent = resultEvents.find(
+                (re) => re.eventNumber === forecastEvent.eventNumber,
+              );
+              if (resultEvent?.outcomeScore) {
+                return {
+                  ...forecastEvent,
+                  outcomeScore: resultEvent.outcomeScore,
+                  sportEventStatus: "Slut",
+                };
+              }
+              return forecastEvent;
+            });
+          } catch (error) {
+            console.warn("⚠️ Could not fetch results:", error);
+          }
+        }
+
+        // Step 1: Get matches to build matchId -> eventNumber map
+        const roundMatches = await APIManager.getMatchesForRound(round);
+        const matchIdToEventNumber = new Map<number, number>();
+        roundMatches.forEach((match: BackendMatch) => {
+          const matchIdRaw = match.Id || match.id || match.ID;
+          const matchId =
+            typeof matchIdRaw === "string"
+              ? parseInt(matchIdRaw, 10)
+              : matchIdRaw;
+          const eventNum =
+            match.MatchNumber ||
+            match.matchNumber ||
+            match.EventNumber ||
+            match.eventNumber;
+          if (matchId && eventNum) {
+            matchIdToEventNumber.set(matchId, eventNum);
+          }
+        });
+
+        // Step 2: Fetch all users' bets
+        const allBetsData = await APIManager.getBetsForRound(round);
+        const allUsersBets: Record<string, Record<number, UserBet>> = {};
+
+        allBetsData.forEach((bet: BackendBet) => {
+          const betUserId = String(bet.aspnet_UsersUserId).toUpperCase();
+          if (!allUsersBets[betUserId]) {
+            allUsersBets[betUserId] = {};
+          }
+
+          const eventNum =
+            bet.MatchNumber ||
+            matchIdToEventNumber.get(
+              typeof bet.matchesId === "string"
+                ? parseInt(bet.matchesId, 10)
+                : (bet.matchesId ?? 0),
+            );
+          if (!eventNum) return;
+
+          const betValue = bet.bet || bet.Bet || bet.tip || bet.Tip;
+          const normalizedBet = betValue?.toString().toUpperCase();
+
+          if (!allUsersBets[betUserId][eventNum]) {
+            allUsersBets[betUserId][eventNum] = {
+              matchId: String(bet.Id || bet.id || 0),
+              eventNumber: eventNum,
+              bets: [],
+              isSafe: bet.safe || bet.Safe || bet.isSafe || bet.IsSafe || false,
+              isFinalized: bet.Final === true || bet.final === true,
+            };
+          }
+
+          if (
+            normalizedBet &&
+            (normalizedBet === "1" ||
+              normalizedBet === "X" ||
+              normalizedBet === "2") &&
+            !allUsersBets[betUserId][eventNum].bets.includes(
+              normalizedBet as "1" | "X" | "2",
+            )
+          ) {
+            allUsersBets[betUserId][eventNum].bets.push(
+              normalizedBet as "1" | "X" | "2",
+            );
+          }
+        });
+
+        // Step 2b: Derive current user's bets from allUsersBets using live JWT userId
+        let betsMap: Record<number, UserBet> = {};
+        let safeBet: number | null = null;
+        let finalized = false;
+
+        const rawToken = getStoredAuthToken();
+        if (rawToken) {
+          const currentUserId = getUserIdFromJwt(rawToken);
+          if (currentUserId) {
+            const myBets = allUsersBets[currentUserId] || {};
+            betsMap = { ...myBets };
+            safeBet =
+              Object.values(myBets).find((b) => b.isSafe)?.eventNumber ?? null;
+            finalized = Object.values(myBets).some((b) => b.isFinalized);
+          }
+        }
+
+        // Fetch distribution if finalized
+        let distributionMap: Record<
+          number,
+          { "1": number; X: number; "2": number }
+        > = {};
+
+        if (shouldFetchResults) {
+          try {
+            const distributionData =
+              await APIManager.getDistributionForRound(round);
+
+            if (Array.isArray(distributionData)) {
+              distributionData.forEach(
+                (item: BackendDistributionItem | string, index: number) => {
+                  if (typeof item === "string") {
+                    const match = item.match(/^(\d+)\s+(\d+)\s+(\d+)/);
+                    if (match) {
+                      const matchNumber = index + 1;
+                      distributionMap[matchNumber] = {
+                        "1": parseInt(match[1], 10),
+                        X: parseInt(match[2], 10),
+                        "2": parseInt(match[3], 10),
+                      };
+                    }
+                  } else {
+                    const matchNumber =
+                      item.matchNumber ||
+                      item.MatchNumber ||
+                      item.eventNumber ||
+                      item.EventNumber;
+                    if (matchNumber) {
+                      distributionMap[matchNumber] = {
+                        "1": item.count1 || item.Count1 || 0,
+                        X: item.countX || item.CountX || 0,
+                        "2": item.count2 || item.Count2 || 0,
+                      };
+                    }
+                  }
+                },
+              );
+            }
+          } catch (error) {
+            console.warn("⚠️ Could not fetch distribution:", error);
+          }
+        }
+
+        setRoundsCache((prev) => ({
+          ...prev,
+          [round]: {
+            drawInfo,
+            userBets: betsMap,
+            safeMatchNumber: safeBet,
+            isFinalized: finalized,
+            allUsersBets,
+            distribution: distributionMap,
+            loading: false,
+            error: null,
+            lastFetched: Date.now(),
+            cacheValid: true,
+            requestInFlight: false,
+            fetchAttempts: 0,
+          },
+        }));
+
+        console.log(`✅ Round ${round} data loaded successfully`);
+      } catch (error) {
+        console.error(`❌ Failed to load round ${round}:`, error);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [roundsCache],
+  );
 
   // Toast setup
   const toasterId = useId("toaster");
@@ -369,42 +565,53 @@ export default function Rounds(props: RoundProps) {
   // Hardcoded admin status (set to false for now)
   const isAdmin = false;
 
-  // Extract data from props
-  const userBets = props.roundData?.userBets || {};
-  const safeMatchNumber = props.roundData?.safeMatchNumber || null;
-  const isFinalized = props.roundData?.isFinalized || false;
-  const distribution = props.roundData?.distribution || {};
-  const drawComment = props.roundData?.drawInfo?.draw?.drawComment || "";
+  // Derive round data from local cache
+  const roundNumber = urlRound ? parseInt(urlRound, 10) : null;
+  const roundData = roundNumber ? roundsCache[roundNumber] : undefined;
+
+  // Extract data from local round cache
+  const userBets = roundData?.allUsersBets?.[props.userId.toUpperCase()] || {};
+  const safeMatchNumber =
+    Object.values(userBets).find((b) => b.isSafe)?.eventNumber ?? null;
+  const isFinalized = Object.values(userBets).some((b) => b.isFinalized);
+  const distribution = roundData?.distribution || {};
+  const drawComment = roundData?.drawInfo?.draw?.drawComment || "";
   const weekMatch = drawComment.match(/v\.\s*(\d{4})-(\d+)/);
   const weekNumber = weekMatch?.[2] || "";
   const yearNumber = weekMatch?.[1] || "";
 
-  // Get selected users' bets from roundData
+  // Total matches in this draw — source of truth for the all-confirmed gate
+  const drawEvents = roundData?.drawInfo?.draw?.events ?? [];
+  const totalMatchCount = drawEvents.length;
+
+  // All-confirmed: every match has a userBet with isFinalized: true
+  const allConfirmed = useMemo(() => {
+    if (totalMatchCount === 0) return false;
+    const confirmedCount = Object.values(userBets).filter(
+      (b) => b.isFinalized,
+    ).length;
+    return confirmedCount === totalMatchCount;
+  }, [userBets, totalMatchCount]);
+
+  // Get selected users' bets from roundData — only shown when all matches are confirmed
   const selectedUsersBets = useMemo(() => {
-    if (!props.roundData?.allUsersBets) return {};
+    if (!roundData?.allUsersBets || !allConfirmed) return {};
 
     const result: Record<string, Record<number, UserBet>> = {};
-
-    if (isFinalized) {
-      // Show all users' bets when finalized
-      Object.keys(props.roundData.allUsersBets).forEach((betUserId) => {
-        result[betUserId] = props.roundData?.allUsersBets[betUserId] || {};
-      });
-    }
-
+    Object.keys(roundData.allUsersBets).forEach((betUserId) => {
+      // Exclude current user's own row
+      if (betUserId === props.userId.toUpperCase()) return;
+      result[betUserId] = roundData!.allUsersBets[betUserId];
+    });
     return result;
-  }, [props.roundData?.allUsersBets, isFinalized]);
+  }, [roundData?.allUsersBets, allConfirmed, props.userId]);
 
   // Load round data when URL changes
   useEffect(() => {
-    if (urlRound) {
-      const roundNumber = parseInt(urlRound, 10);
-      if (roundNumber && !isNaN(roundNumber)) {
-        console.log(`🔄 URL changed to round ${roundNumber}, loading data...`);
-        //props.loadRoundData(roundNumber);
-      }
-    }
-  }, [urlRound]);
+    if (!roundNumber) return;
+    console.log(`🔄 URL changed to round ${roundNumber}, loading data...`);
+    fetchRoundData(roundNumber);
+  }, [urlRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Round selector state
   const [roundSelectorOpen, setRoundSelectorOpen] = useState(false);
@@ -455,7 +662,7 @@ export default function Rounds(props: RoundProps) {
       console.log(`✅ Bet saved for match ${eventNumber}`);
 
       // Reload round data to get fresh state
-      await props.loadRoundData(props.currentRound, true);
+      await fetchRoundData(props.currentRound, true);
     } catch (error) {
       console.error("Failed to save bet:", error);
     }
@@ -483,7 +690,7 @@ export default function Rounds(props: RoundProps) {
         console.log(`✅ Safe match updated: ${newSafeMatch}`);
 
         // Reload round data to get fresh state
-        await props.loadRoundData(props.currentRound, true);
+        await fetchRoundData(props.currentRound, true);
       }
     } catch (error) {
       console.error("Failed to update safe match:", error);
@@ -499,7 +706,7 @@ export default function Rounds(props: RoundProps) {
 
     setIsRefreshing(true);
     try {
-      await props.loadRoundData(props.currentRound, true);
+      await fetchRoundData(props.currentRound, true);
 
       // Show success toast
       dispatchToast(
@@ -524,7 +731,7 @@ export default function Rounds(props: RoundProps) {
     } finally {
       setIsRefreshing(false);
     }
-  }, [props, dispatchToast]);
+  }, [props.currentRound, fetchRoundData, dispatchToast]);
 
   // Handle finalize
   const handleFinalizeRound = async () => {
@@ -540,7 +747,7 @@ export default function Rounds(props: RoundProps) {
       console.log("✅ Round finalized");
 
       // Reload round data to get fresh state
-      await props.loadRoundData(props.currentRound, true);
+      await fetchRoundData(props.currentRound, true);
     } catch (error) {
       console.error("Failed to finalize round:", error);
     }
@@ -572,7 +779,7 @@ export default function Rounds(props: RoundProps) {
       console.log(`✅ Match ${eventNumber} finalized`);
 
       // Reload round data to get fresh state
-      await props.loadRoundData(props.currentRound, true);
+      await fetchRoundData(props.currentRound, true);
     } catch (error) {
       console.error("Failed to finalize match:", error);
     }
@@ -645,7 +852,7 @@ export default function Rounds(props: RoundProps) {
   };
 
   // Render loading state (when data is being fetched)
-  if (props.roundData?.loading || isRefreshing) {
+  if (isLoading || isRefreshing) {
     return (
       <PageContainer>
         <div className={globalStyles.loadingContainer}>
@@ -721,14 +928,13 @@ export default function Rounds(props: RoundProps) {
               Avslutad
             </Badge>
           )}
-          {props.roundData?.drawInfo?.draw?.drawState &&
-            props.roundData.drawInfo.draw.drawState.toLowerCase() !==
-              "open" && (
+          {roundData?.drawInfo?.draw?.drawState &&
+            roundData.drawInfo.draw.drawState.toLowerCase() !== "open" && (
               <Button
                 appearance="primary"
                 icon={<ArrowSync20Regular />}
                 onClick={handleRefresh}
-                disabled={isRefreshing || props.roundData?.loading}
+                disabled={isRefreshing}
                 style={{ marginLeft: "auto" }}
               >
                 {isRefreshing ? "Refreshing..." : "Refresh Round Data"}
@@ -740,9 +946,9 @@ export default function Rounds(props: RoundProps) {
       <Toaster toasterId={toasterId} />
 
       <div className={globalStyles.list}>
-        {props.roundData &&
+        {roundData &&
           props.currentRound &&
-          props.roundData.drawInfo?.draw.events.map((event: DrawEvent) => {
+          roundData.drawInfo?.draw.events.map((event: DrawEvent) => {
             const homeParticipant = event.participants?.find(
               (p: Participant) => p.type === "home",
             );

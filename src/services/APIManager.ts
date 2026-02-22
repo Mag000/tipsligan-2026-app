@@ -128,51 +128,34 @@ export class APIManager {
   }
 
   // Get user bets for a specific round - userId is extracted from Bearer token on backend
-  static async getUserBetsForRound(
-    round: number,
-    userId?: string | number,
-    signal?: AbortSignal,
-  ) {
-    return requestDeduplicator.deduplicate(
-      `userBets-${round}-${userId || "current"}`,
-      async () => {
-        try {
-          const headers = getAuthHeaders() || undefined;
+  static async getUserBetsForRound(round: number, signal?: AbortSignal) {
+    return requestDeduplicator.deduplicate(`userBets-${round}`, async () => {
+      try {
+        const headers = getAuthHeaders() || undefined;
 
-          const response = await fetch(`${API_BASE_URL}/bets/${round}/user`, {
-            headers,
-            signal,
-          });
+        const response = await fetch(`${API_BASE_URL}/bets/${round}/user`, {
+          headers,
+          signal,
+        });
 
-          if (!response.ok) {
-            console.warn(
-              `⚠️ Failed to fetch bets for round ${round}: ${response.status} ${response.statusText}`,
-            );
-            return []; // Return empty array instead of throwing
-          }
-
-          const allBets = await response.json();
-          console.log(`📦 All bets from API for round ${round}:`, allBets);
-
-          // Filter bets for the specific user
-          // Compare as strings to handle both GUID strings and numeric IDs
-          const userBetsFiltered = allBets.filter(
-            (bet: any) =>
-              String(bet.aspnet_UsersUserId).toUpperCase() ===
-              String(userId).toUpperCase(),
-          );
-
-          console.log(`✅ Filtered bets for user ${userId}:`, userBetsFiltered);
-          return userBetsFiltered;
-        } catch (error) {
+        if (!response.ok) {
           console.warn(
-            `⚠️ Error fetching user bets for round ${round}:`,
-            error,
+            `⚠️ Failed to fetch bets for round ${round}: ${response.status} ${response.statusText}`,
           );
-          return []; // Return empty array on error so app continues to work
+          return []; // Return empty array instead of throwing
         }
-      },
-    );
+
+        const allBets = await response.json();
+        console.log(
+          `✅ User bets for round ${round} (${allBets.length}):`,
+          allBets,
+        );
+        return allBets;
+      } catch (error) {
+        console.warn(`⚠️ Error fetching user bets for round ${round}:`, error);
+        return []; // Return empty array on error so app continues to work
+      }
+    });
   }
 
   // Submit or update user bet for a specific round
@@ -341,7 +324,7 @@ export class APIManager {
   }
 
   // Finalize bets for a specific round - userId extracted from Bearer token on backend
-  static async finalizeBetsForRound(round: number, userId?: string | number) {
+  static async finalizeBetsForRound(round: number) {
     try {
       const headers = getAuthHeaders() || undefined;
 
@@ -357,7 +340,7 @@ export class APIManager {
         );
       }
 
-      console.log(`✅ Finalized bets for round ${round}, user ${userId}`);
+      console.log(`✅ Finalized bets for round ${round}`);
       return await response.json();
     } catch (error) {
       console.error(`❌ Error finalizing bets for round ${round}:`, error);
@@ -366,12 +349,7 @@ export class APIManager {
   }
 
   // Save or update a bet for a specific match - userId extracted from Bearer token on backend
-  static async saveBet(
-    round: number,
-    matchNumber: number,
-    bet: string,
-    userId?: string | number,
-  ) {
+  static async saveBet(round: number, matchNumber: number, bet: string) {
     try {
       const headers = getAuthHeaders() || undefined;
 
@@ -399,8 +377,8 @@ export class APIManager {
   }
 
   // Finalize round (alias for finalizeBetsForRound for convenience)
-  static async finalizeRound(round: number, userId?: string | number) {
-    return this.finalizeBetsForRound(round, userId);
+  static async finalizeRound(round: number) {
+    return this.finalizeBetsForRound(round);
   }
 
   // Get news for a specific round

@@ -3,7 +3,7 @@ import {
   Spinner,
   webLightTheme,
 } from "@fluentui/react-components";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Navigate,
   Route,
@@ -19,49 +19,16 @@ import Profile from "./pages/Profile";
 import Rounds from "./pages/Rounds";
 import Standings from "./pages/Standings";
 import { APIManager } from "./services/APIManager";
-import {
-  BackendBet,
-  BackendDistributionItem,
-  BackendMatch,
-} from "./types/backend";
+import { Round, RoundData } from "./store/roundsSlice";
 import { roundSet } from "./types/round";
-import { SvenskaSpelResponse } from "./types/svenskaspel";
-import { getStoredAuthToken } from "./utils/authToken";
+import { getStoredAuthToken, getUserIdFromJwt } from "./utils/authToken";
 
-// Define types for our centralized state
-export interface UserBet {
-  matchId: string;
-  eventNumber: number;
-  bets: Array<"1" | "X" | "2">;
-  isSafe: boolean;
-  isFinalized: boolean;
-}
-
-export interface RoundData {
-  drawInfo: SvenskaSpelResponse | null;
-  userBets: Record<number, UserBet>;
-  safeMatchNumber: number | null;
-  isFinalized: boolean;
-  allUsersBets: Record<string, Record<number, UserBet>>;
-  distribution: Record<number, { "1": number; X: number; "2": number }>;
-}
-
-export interface Round {
-  id?: number;
-  SPRoundNum: number;
-  Year: number;
-  Week: number;
-  Month?: number;
-  Comment?: string;
-  Finished?: boolean;
-}
+export type { Round, RoundData };
 
 // Context type for passing round data
 export interface AppContextType {
   currentRound: number | null;
   setCurrentRound: (round: number) => void;
-  roundsData: Record<number, RoundData>;
-  loadRoundData: (round: number, force?: boolean) => Promise<void>;
   userId: string;
 }
 
@@ -141,13 +108,11 @@ function RoundsRedirect({
 
 // Wrapper component for Rounds route to get URL parameter
 function RoundsWrapper({
-  roundsData,
-  loadRoundData,
   availableRounds,
+  userId,
 }: {
-  roundsData: Record<number, RoundData>;
-  loadRoundData: (round: number, force?: boolean) => Promise<void>;
   availableRounds: Round[];
+  userId: string;
 }) {
   const { round: urlRound } = useParams<{ round: string }>();
   const roundNumber = urlRound ? parseInt(urlRound, 10) : null;
@@ -155,9 +120,8 @@ function RoundsWrapper({
   return (
     <Rounds
       currentRound={roundNumber}
-      roundData={roundNumber ? roundsData[roundNumber] : undefined}
-      loadRoundData={loadRoundData}
       availableRounds={availableRounds}
+      userId={userId}
     />
   );
 }
@@ -165,9 +129,14 @@ function RoundsWrapper({
 function App() {
   // Centralized state for rounds and bets
   const [currentRound, setCurrentRound] = useState<number | null>(null);
-  const [roundsData, setRoundsData] = useState<Record<number, RoundData>>({});
   const [availableRounds, setAvailableRounds] = useState<Round[]>([]);
   const [token, setToken] = useState<string | null>(getStoredAuthToken());
+
+  // Derive userId from the stored JWT token
+  const userId = useMemo(() => {
+    if (!token) return "";
+    return getUserIdFromJwt(token) ?? "";
+  }, [token]);
 
   // Track if initialization has run to ensure it only runs once per page load
   const hasInitialized = useRef(false);
@@ -193,246 +162,6 @@ function App() {
       console.error("❌ Failed to refresh available rounds:", error);
     }
   }, []);
-
-  // Load round data function
-  const loadRoundData = useCallback(
-    async (round: number, force: boolean = false) => {
-      // Skip if already loaded (unless forced)
-      if (!force && roundsData[round]?.drawInfo) {
-        console.log(`✅ Round ${round} already loaded`);
-        return;
-      }
-
-      try {
-        console.log(`🔍 Loading data for round ${round}...`);
-
-        // Fetch draw info
-        const drawInfo = await APIManager.getSvenskaSpelDrawInfo(round);
-
-        // Check if results are needed
-        const shouldFetchResults =
-          drawInfo.draw.drawState?.toLowerCase() === "finalized" ||
-          drawInfo.draw.drawState?.toLowerCase() === "result";
-
-        if (shouldFetchResults) {
-          try {
-            const resultInfo = await APIManager.getSvenskaSpelDrawResult(round);
-            // Merge results into draw info
-            const resultEvents = resultInfo.result.events || [];
-            drawInfo.draw.events = drawInfo.draw.events.map((forecastEvent) => {
-              const resultEvent = resultEvents.find(
-                (re) => re.eventNumber === forecastEvent.eventNumber,
-              );
-              if (resultEvent?.outcomeScore) {
-                return {
-                  ...forecastEvent,
-                  outcomeScore: resultEvent.outcomeScore,
-                  sportEventStatus: "Slut",
-                };
-              }
-              return forecastEvent;
-            });
-          } catch (error) {
-            console.warn("⚠️ Could not fetch results:", error);
-          }
-        }
-
-        // Step 1: Get matches to build matchId -> eventNumber map
-        const roundMatches = await APIManager.getMatchesForRound(round);
-        const matchIdToEventNumber = new Map<number, number>();
-        roundMatches.forEach((match: BackendMatch) => {
-          const matchIdRaw = match.Id || match.id || match.ID;
-          const matchId =
-            typeof matchIdRaw === "string"
-              ? parseInt(matchIdRaw, 10)
-              : matchIdRaw;
-          const eventNum =
-            match.MatchNumber ||
-            match.matchNumber ||
-            match.EventNumber ||
-            match.eventNumber;
-          if (matchId && eventNum) {
-            matchIdToEventNumber.set(matchId, eventNum);
-          }
-        });
-
-        // Step 2: Fetch user bets
-        const betsData = await APIManager.getUserBetsForRound(round);
-        const betsMap: Record<number, UserBet> = {};
-        let safeBet: number | null = null;
-        let finalized = false;
-
-        betsData.forEach((bet: BackendBet) => {
-          // Get matchId from bet
-          const matchId =
-            bet.matchesId || bet.matchesSet_Id || bet.MatchId || bet.matchId;
-
-          if (!matchId) return; // Skip if no matchId
-
-          // Get eventNumber from our map
-          const eventNum = matchIdToEventNumber.get(matchId);
-
-          if (!eventNum) return; // Skip if we can't find the event number
-
-          // Get bet value
-          const betValue = bet.bet || bet.Bet || bet.tip || bet.Tip;
-          const normalizedBet = betValue?.toString().toUpperCase();
-
-          // Initialize or get existing bets for this event
-          if (!betsMap[eventNum]) {
-            betsMap[eventNum] = {
-              matchId: String(bet.Id || bet.id || 0),
-              eventNumber: eventNum,
-              bets: [],
-              isSafe: false,
-              isFinalized: bet.Final === true || bet.final === true,
-            };
-          }
-
-          // Add bet if valid and not duplicate (for halvgardering)
-          if (
-            normalizedBet &&
-            (normalizedBet === "1" ||
-              normalizedBet === "X" ||
-              normalizedBet === "2") &&
-            !betsMap[eventNum].bets.includes(normalizedBet as "1" | "X" | "2")
-          ) {
-            betsMap[eventNum].bets.push(normalizedBet as "1" | "X" | "2");
-          }
-
-          // Set safe match
-          const isSafe =
-            bet.safe || bet.Safe || bet.isSafe || bet.IsSafe || false;
-          if (isSafe) {
-            safeBet = eventNum;
-            betsMap[eventNum].isSafe = true;
-          }
-
-          // Update finalized status
-          const isBetFinalized = bet.Final === true || bet.final === true;
-          if (isBetFinalized) {
-            finalized = true;
-          }
-        });
-
-        // Step 3: Fetch all users' bets
-        const allBetsData = await APIManager.getBetsForRound(round);
-        const allUsersBets: Record<string, Record<number, UserBet>> = {};
-
-        allBetsData.forEach((bet: BackendBet) => {
-          const betUserId = String(bet.aspnet_UsersUserId).toUpperCase();
-          if (!allUsersBets[betUserId]) {
-            allUsersBets[betUserId] = {};
-          }
-
-          // Get matchId from bet
-          const matchId =
-            bet.matchesId || bet.matchesSet_Id || bet.MatchId || bet.matchId;
-
-          if (!matchId) return; // Skip if no matchId
-
-          // Get eventNumber from our map
-          const eventNum = matchIdToEventNumber.get(matchId);
-
-          if (!eventNum) return; // Skip if we can't find the event number
-
-          // Get bet value
-          const betValue = bet.bet || bet.Bet || bet.tip || bet.Tip;
-          const normalizedBet = betValue?.toString().toUpperCase();
-
-          // Initialize or get existing bets for this event
-          if (!allUsersBets[betUserId][eventNum]) {
-            allUsersBets[betUserId][eventNum] = {
-              matchId: String(bet.Id || bet.id || 0),
-              eventNumber: eventNum,
-              bets: [],
-              isSafe: bet.safe || bet.Safe || bet.isSafe || bet.IsSafe || false,
-              isFinalized: bet.Final === true || bet.final === true,
-            };
-          }
-
-          // Add bet if valid and not duplicate (for halvgardering)
-          if (
-            normalizedBet &&
-            (normalizedBet === "1" ||
-              normalizedBet === "X" ||
-              normalizedBet === "2") &&
-            !allUsersBets[betUserId][eventNum].bets.includes(
-              normalizedBet as "1" | "X" | "2",
-            )
-          ) {
-            allUsersBets[betUserId][eventNum].bets.push(
-              normalizedBet as "1" | "X" | "2",
-            );
-          }
-        });
-
-        // Fetch distribution if finalized
-        let distributionMap: Record<
-          number,
-          { "1": number; X: number; "2": number }
-        > = {};
-
-        if (shouldFetchResults) {
-          try {
-            const distributionData =
-              await APIManager.getDistributionForRound(round);
-
-            if (Array.isArray(distributionData)) {
-              distributionData.forEach(
-                (item: BackendDistributionItem | string, index: number) => {
-                  if (typeof item === "string") {
-                    const match = item.match(/^(\d+)\s+(\d+)\s+(\d+)/);
-                    if (match) {
-                      const matchNumber = index + 1;
-                      distributionMap[matchNumber] = {
-                        "1": parseInt(match[1], 10),
-                        X: parseInt(match[2], 10),
-                        "2": parseInt(match[3], 10),
-                      };
-                    }
-                  } else {
-                    const matchNumber =
-                      item.matchNumber ||
-                      item.MatchNumber ||
-                      item.eventNumber ||
-                      item.EventNumber;
-                    if (matchNumber) {
-                      distributionMap[matchNumber] = {
-                        "1": item.count1 || item.Count1 || 0,
-                        X: item.countX || item.CountX || 0,
-                        "2": item.count2 || item.Count2 || 0,
-                      };
-                    }
-                  }
-                },
-              );
-            }
-          } catch (error) {
-            console.warn("⚠️ Could not fetch distribution:", error);
-          }
-        }
-
-        // Store in state
-        setRoundsData((prev) => ({
-          ...prev,
-          [round]: {
-            drawInfo,
-            userBets: betsMap,
-            safeMatchNumber: safeBet,
-            isFinalized: finalized,
-            allUsersBets,
-            distribution: distributionMap,
-          },
-        }));
-
-        console.log(`✅ Round ${round} data loaded successfully`);
-      } catch (error) {
-        console.error(`❌ Failed to load round ${round}:`, error);
-      }
-    },
-    [],
-  );
 
   // Fetch Svenska Spel draws once at startup (requires authentication)
   useEffect(() => {
@@ -478,16 +207,10 @@ function App() {
 
         setAvailableRounds(roundsWithData);
 
-        // Set latest round as current and load its data
+        // Set latest round as current
         if (roundsWithData.length > 0) {
           const latestRound = roundsWithData[0].SPRoundNum;
           setCurrentRound(latestRound);
-
-          // Load the round data before finishing initialization
-          console.log(
-            `📊 Loading initial round data for round ${latestRound}...`,
-          );
-          await loadRoundData(latestRound);
         }
       } catch (error) {
         console.error("❌ Failed to initialize rounds:", error);
@@ -556,9 +279,8 @@ function App() {
             path="/rounds/:round"
             element={
               <RoundsWrapper
-                roundsData={roundsData}
-                loadRoundData={loadRoundData}
                 availableRounds={availableRounds}
+                userId={userId}
               />
             }
           />
