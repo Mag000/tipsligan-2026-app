@@ -27,11 +27,19 @@ const useStyles = makeStyles({
 
 interface PageContainerProps {
   children: ReactNode;
+  /**
+   * Optional header content always rendered inside the constrained (max-width 1200px)
+   * container, regardless of the `fullWidth` prop. Use this to keep a page header
+   * visually consistent with other pages while allowing the content area below to
+   * expand to full viewport width (e.g. wide data tables in advanced mode).
+   */
+  header?: ReactNode;
   fullWidth?: boolean;
 }
 
 export function PageContainer({
   children,
+  header,
   fullWidth = false,
 }: PageContainerProps) {
   const styles = useStyles();
@@ -39,6 +47,7 @@ export function PageContainer({
     <div className={styles.layout}>
       <Navigation />
       <main className={styles.mainContent}>
+        {header && <div className={styles.container}>{header}</div>}
         <div
           className={fullWidth ? styles.containerFullWidth : styles.container}
         >

@@ -1,13 +1,4 @@
-import {
-  Button,
-  makeStyles,
-  shorthands,
-  tokens,
-} from "@fluentui/react-components";
-import {
-  ChevronDown20Regular,
-  ChevronUp20Regular,
-} from "@fluentui/react-icons";
+import { makeStyles, shorthands, tokens } from "@fluentui/react-components";
 import { useState } from "react";
 import {
   BaseStat,
@@ -161,14 +152,12 @@ const useStyles = makeStyles({
     fontSize: "12px",
     whiteSpace: "nowrap",
   },
-  toggleButton: {
-    marginBottom: "16px",
-  },
 });
 
 interface StandingsTableProps {
   baseStats: BaseStat[];
-  showToggle?: boolean;
+  /** Controlled prop — drives simple vs. advanced mode from the parent. */
+  advanced?: boolean;
   defaultAdvanced?: boolean;
   userDisplayNames: Record<string, string>;
   scopeLabel?: string;
@@ -176,13 +165,13 @@ interface StandingsTableProps {
 
 export function StandingsTable({
   baseStats,
-  showToggle = true,
+  advanced,
   defaultAdvanced = false,
   userDisplayNames,
   scopeLabel,
 }: StandingsTableProps) {
   const styles = useStyles();
-  const [showAdvanced, setShowAdvanced] = useState(defaultAdvanced);
+  const showAdvanced = advanced ?? defaultAdvanced;
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
 
@@ -205,17 +194,6 @@ export function StandingsTable({
 
   return (
     <>
-      {showToggle && (
-        <Button
-          className={styles.toggleButton}
-          icon={
-            showAdvanced ? <ChevronUp20Regular /> : <ChevronDown20Regular />
-          }
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
-          {showAdvanced ? "Visa enkel vy" : "Visa avancerad statistik"}
-        </Button>
-      )}
       {scopeLabel && (
         <div
           style={{

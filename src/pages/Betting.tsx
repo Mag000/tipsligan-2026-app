@@ -5,10 +5,15 @@
  */
 
 import React from "react";
+import { PageContainer } from "../components/PageContainer";
 import BettingPage from "../components/betting/BettingPage";
 
 const Betting: React.FC = () => {
-  return <BettingPage />;
+  return (
+    <PageContainer>
+      <BettingPage />
+    </PageContainer>
+  );
 };
 
 export default Betting;

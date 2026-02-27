@@ -11,20 +11,17 @@ import { ReactNode } from "react";
 const useStyles = makeStyles({
   header: {
     marginBottom: "32px",
-    position: "sticky",
-    top: "0",
     backgroundColor: tokens.colorNeutralBackground1,
-    zIndex: 100,
     ...shorthands.padding("20px", "0"),
     ...shorthands.margin("0", "-20px"),
     paddingLeft: "20px",
     paddingRight: "20px",
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
   },
   title: {
     marginBottom: "12px",
     display: "flex",
     alignItems: "center",
+    justifyContent: "space-between",
     ...shorthands.gap("12px"),
     flexWrap: "wrap",
   },

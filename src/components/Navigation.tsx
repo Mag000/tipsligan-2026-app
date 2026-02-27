@@ -236,6 +236,7 @@ export function Navigation() {
       label: `Aktuell vecka (v${navWeek} ${navYear})`,
       path: "/standings/week",
     },
+    { label: "Filtrerad", path: "/standings/filter" },
   ];
   const menuItems = [
     { id: "home", label: "Hem", icon: <Home24Regular />, path: "/" },

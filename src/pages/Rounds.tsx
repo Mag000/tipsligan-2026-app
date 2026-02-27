@@ -369,7 +369,12 @@ export default function Rounds(props: RoundProps) {
         return;
       }
 
-      setIsLoading(true);
+      // Only show the full loading state on a true first load (no existing cache data).
+      // Force-refreshes on already-loaded rounds are kept silent here;
+      // isRefreshing (set by handleRefresh) provides button-level feedback instead.
+      if (!roundsCache[round]?.drawInfo) {
+        setIsLoading(true);
+      }
       try {
         console.log(`🔍 Loading data for round ${round}...`);
 
@@ -575,6 +580,10 @@ export default function Rounds(props: RoundProps) {
   const safeMatchNumber =
     Object.values(userBets).find((b) => b.isSafe)?.eventNumber ?? null;
   const isFinalized = Object.values(userBets).some((b) => b.isFinalized);
+  const halvgarderingCount = useMemo(
+    () => Object.values(userBets).filter((b) => b.bets.length >= 2).length,
+    [userBets],
+  );
   const distribution = roundData?.distribution || {};
   const drawComment = roundData?.drawInfo?.draw?.drawComment || "";
   const weekMatch = drawComment.match(/v\.\s*(\d{4})-(\d+)/);
@@ -607,11 +616,13 @@ export default function Rounds(props: RoundProps) {
     return result;
   }, [roundData?.allUsersBets, allConfirmed, props.userId]);
 
-  // Load round data when URL changes
+  // Load round data when URL changes.
+  // Always force=true so navigating back to a previously visited round fetches
+  // fresh bets from the DB instead of returning early with stale optimistic cache.
   useEffect(() => {
     if (!roundNumber) return;
     console.log(`🔄 URL changed to round ${roundNumber}, loading data...`);
-    fetchRoundData(roundNumber);
+    fetchRoundData(roundNumber, true);
   }, [urlRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Round selector state
@@ -638,8 +649,13 @@ export default function Rounds(props: RoundProps) {
   // Handle bet selection
   const handleBetChange = async (
     eventNumber: number,
-    betType: "1" | "X" | "2",
+    betType: "1" | "x" | "2",
   ) => {
+    if (!allMatchesNotStarted) {
+      console.log("⛔ Round has started, cannot place bets");
+      return;
+    }
+
     if (isFinalized) {
       console.log("⛔ Bets are finalized, cannot change");
       return;
@@ -650,22 +666,125 @@ export default function Rounds(props: RoundProps) {
       return;
     }
 
-    const currentBet = userBets[eventNumber];
+    const round = props.currentRound;
+    const currentUserId = props.userId.toUpperCase();
 
-    if (currentBet) {
-      // Bets are managed by backend and reloaded
+    // Read current state synchronously for constraint checks
+    const currentUserBets =
+      roundsCache[round]?.allUsersBets?.[currentUserId] ?? {};
+    const currentMatchBet = currentUserBets[eventNumber];
+    const currentBets = currentMatchBet?.bets ?? [];
+    const isRemoving = currentBets.includes(betType);
+
+    // Per-match cap: cannot add a 3rd sign to the same match
+    if (!isRemoving && currentBets.length >= 2) {
+      console.log("⛔ Per-match max 2 signs reached");
+      return;
     }
 
-    // Save to backend
-    try {
-      // userId is extracted from Bearer token on the backend
-      await APIManager.saveBet(props.currentRound, eventNumber, betType);
-      console.log(`✅ Bet saved for match ${eventNumber}`);
+    // Cannot halvgarda the safe match
+    if (!isRemoving && currentBets.length === 1 && currentMatchBet?.isSafe) {
+      dispatchToast(
+        <Toast>
+          <ToastTitle>Kan inte halvgarda säkermatch</ToastTitle>
+          <ToastBody>Ta bort säkermatch-märkningen först.</ToastBody>
+        </Toast>,
+        { intent: "warning" },
+      );
+      return;
+    }
 
-      // Reload round data to get fresh state
-      await fetchRoundData(props.currentRound, true);
+    // Round halvgardering cap: max 7 halvgarderingar per round
+    const currentHalvCount = Object.values(currentUserBets).filter(
+      (b) => b.bets.length >= 2,
+    ).length;
+    const wouldBeHalv = !isRemoving && currentBets.length === 1;
+    if (wouldBeHalv && currentHalvCount >= 7) {
+      dispatchToast(
+        <Toast>
+          <ToastTitle>Max 7 halvgarderingar</ToastTitle>
+          <ToastBody>
+            Du kan inte halvgarda fler matcher denna omgång.
+          </ToastBody>
+        </Toast>,
+        { intent: "warning" },
+      );
+      return;
+    }
+
+    // Compute toggled bets array
+    const newBets = isRemoving
+      ? currentBets.filter((b) => b !== betType)
+      : [...currentBets, betType];
+
+    // Snapshot previous state so we can roll back if the save fails
+    const previousBet = currentMatchBet;
+
+    // Optimistic update — reflect the selection immediately before awaiting the API
+    setRoundsCache((prev) => {
+      const prevRound = prev[round];
+      if (!prevRound) return prev;
+      const prevUserBets = prevRound.allUsersBets?.[currentUserId] ?? {};
+      const prevMatchBet = prevUserBets[eventNumber];
+      return {
+        ...prev,
+        [round]: {
+          ...prevRound,
+          allUsersBets: {
+            ...prevRound.allUsersBets,
+            [currentUserId]: {
+              ...prevUserBets,
+              [eventNumber]: {
+                matchId: prevMatchBet?.matchId ?? String(eventNumber),
+                eventNumber,
+                bets: newBets,
+                isSafe: prevMatchBet?.isSafe ?? false,
+                isFinalized: prevMatchBet?.isFinalized ?? false,
+              },
+            },
+          },
+        },
+      };
+    });
+
+    // Save to backend (fire and forget — invisible to user)
+    try {
+      await APIManager.saveBet(round, eventNumber, betType);
+      console.log(`✅ Bet saved for match ${eventNumber}`);
     } catch (error) {
       console.error("Failed to save bet:", error);
+
+      // Revert optimistic update on failure
+      setRoundsCache((prev) => {
+        const prevRound = prev[round];
+        if (!prevRound) return prev;
+        const revertedUserBets = {
+          ...prevRound.allUsersBets?.[currentUserId],
+        };
+        if (previousBet === undefined) {
+          delete revertedUserBets[eventNumber];
+        } else {
+          revertedUserBets[eventNumber] = previousBet;
+        }
+        return {
+          ...prev,
+          [round]: {
+            ...prevRound,
+            allUsersBets: {
+              ...prevRound.allUsersBets,
+              [currentUserId]: revertedUserBets,
+            },
+          },
+        };
+      });
+
+      dispatchToast(
+        <Toast>
+          <ToastTitle>Kunde inte spara tips</ToastTitle>
+          <ToastBody>Försök igen.</ToastBody>
+        </Toast>,
+        { intent: "error" },
+      );
     }
   };
 
@@ -831,6 +950,14 @@ export default function Rounds(props: RoundProps) {
     return { status: "Not started", result: null, outcome: null };
   };
 
+  // Derived: true only when every event in the round has not yet started
+  const allMatchesNotStarted = useMemo(() => {
+    if (!drawEvents || drawEvents.length === 0) return false;
+    return drawEvents.every(
+      (event) => getMatchStatus(event).status === "Not started",
+    );
+  }, [drawEvents]);
+
   // Calculate newspaper tips distribution
   const getNewspaperTipsArray = (event: DrawEvent) => {
     const advice = event.newspaperAdvice;
@@ -852,8 +979,9 @@ export default function Rounds(props: RoundProps) {
     return tips;
   };
 
-  // Render loading state (when data is being fetched)
-  if (isLoading || isRefreshing) {
+  // Full-page spinner: ONLY on true first load (no data yet in cache for this round).
+  // isRefreshing does NOT trigger a full-page blank — button-level feedback is sufficient.
+  if (isLoading && !roundData?.drawInfo) {
     return (
       <PageContainer>
         <div className={globalStyles.loadingContainer}>
@@ -920,6 +1048,11 @@ export default function Rounds(props: RoundProps) {
                 </Option>
               ))}
             </Dropdown>
+          )}
+          {!isFinalized && halvgarderingCount > 0 && (
+            <Badge appearance="filled" color="informative">
+              {halvgarderingCount} / 7 halvgarderingar
+            </Badge>
           )}
           {isFinalized && (
             <Badge appearance="filled" color="success">
@@ -1042,29 +1175,37 @@ export default function Rounds(props: RoundProps) {
                 >
                   <span className={styles.myBetsLabel}>Mitt tips</span>
                   <div className={styles.betBoxesContainer}>
-                    {["1", "X", "2"].map((betType) => (
+                    {["1", "x", "2"].map((betType) => (
                       <div
                         key={betType}
                         className={`${styles.betBox} ${
-                          userBet?.bets.includes(betType as "1" | "X" | "2")
+                          userBet?.bets.includes(
+                            betType.toLowerCase() as "1" | "X" | "2",
+                          )
                             ? styles.betBoxSelected
                             : ""
                         }`}
                         onClick={() =>
-                          (!userBet?.isFinalized && !isFinalized) || isAdmin
+                          allMatchesNotStarted &&
+                          !userBet?.isFinalized &&
+                          !isFinalized
                             ? handleBetChange(
                                 event.eventNumber,
-                                betType as "1" | "X" | "2",
+                                betType.toLowerCase() as "1" | "x" | "2",
                               )
                             : null
                         }
                         style={{
                           opacity:
-                            (userBet?.isFinalized || isFinalized) && !isAdmin
+                            !allMatchesNotStarted ||
+                            userBet?.isFinalized ||
+                            isFinalized
                               ? 0.6
                               : 1,
                           cursor:
-                            (!userBet?.isFinalized && !isFinalized) || isAdmin
+                            allMatchesNotStarted &&
+                            !userBet?.isFinalized &&
+                            !isFinalized
                               ? "pointer"
                               : "default",
                         }}
@@ -1078,9 +1219,11 @@ export default function Rounds(props: RoundProps) {
                           ? "Säker match (låst)"
                           : userBet?.isFinalized || isFinalized
                             ? "Säker match (admin kan ändra)"
-                            : userBet && userBet.bets.length > 0
-                              ? "Klicka för att markera som säkermatch"
-                              : "Placera ett tips först"
+                            : userBet && userBet.bets.length >= 2
+                              ? "Halvgardering kan inte vara säkermatch"
+                              : userBet && userBet.bets.length === 1
+                                ? "Klicka för att markera som säkermatch"
+                                : "Placera ett tips först"
                       }
                       relationship="label"
                     >
@@ -1088,14 +1231,14 @@ export default function Rounds(props: RoundProps) {
                         fontSize={20}
                         onClick={() =>
                           userBet &&
-                          userBet.bets.length > 0 &&
+                          userBet.bets.length === 1 &&
                           ((!userBet.isFinalized && !isFinalized) || isAdmin) &&
                           handleSafeToggle(event.eventNumber)
                         }
                         style={{
                           cursor:
                             !userBet ||
-                            userBet.bets.length === 0 ||
+                            userBet.bets.length !== 1 ||
                             ((userBet.isFinalized || isFinalized) && !isAdmin)
                               ? "default"
                               : "pointer",

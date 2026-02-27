@@ -12,6 +12,7 @@ import {
   useParams,
 } from "react-router-dom";
 import "./App.css";
+import { PageContainer } from "./components/PageContainer";
 import Betting from "./pages/Betting";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
@@ -75,32 +76,36 @@ function RoundsRedirect({
 
   if (isSyncing) {
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100vh",
-        }}
-      >
-        <Spinner size="large" />
-      </div>
+      <PageContainer>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            minHeight: "60vh",
+          }}
+        >
+          <Spinner size="large" />
+        </div>
+      </PageContainer>
     );
   }
 
   if (!syncedRound) {
     // Last-resort fallback if both sync and pre-loaded state are unavailable
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100vh",
-        }}
-      >
-        <Spinner size="large" />
-      </div>
+      <PageContainer>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            minHeight: "60vh",
+          }}
+        >
+          <Spinner size="large" />
+        </div>
+      </PageContainer>
     );
   }
 

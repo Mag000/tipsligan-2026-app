@@ -31,12 +31,8 @@ import MatchCard from "./MatchCard";
 import MatchCardSkeleton from "./MatchCardSkeleton";
 
 const useStyles = makeStyles({
-  container: {
-    ...shorthands.padding("20px"),
-    maxWidth: "1200px",
-    marginLeft: "auto",
-    marginRight: "auto",
-  },
+  // Container styling is handled by PageContainer
+  container: {},
   header: {
     marginBottom: "20px",
   },

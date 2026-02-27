@@ -359,7 +359,7 @@ export class APIManager {
         body: JSON.stringify({
           round: round,
           matchNumber: matchNumber,
-          bet: bet,
+          bet: bet.toLowerCase(), // DB stores lowercase: "1", "x", "2"
         }),
       });
 
