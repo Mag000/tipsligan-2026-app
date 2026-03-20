@@ -4,7 +4,7 @@
  * Provides common authentication utilities used across all API services.
  */
 
-// Flag to prevent multiple redirect attempts (no longer used for actual redirects)
+// Flag to prevent multiple redirect attempts
 let isRedirecting = false;
 
 /**
@@ -15,17 +15,28 @@ export const resetRedirectFlag = () => {
 };
 
 /**
+ * Call this whenever a 401 Unauthorized response is received.
+ * Clears the stored token and dispatches a global event so the React app
+ * can redirect to the login page regardless of where in the component tree the call originated.
+ */
+export const handle401 = (): void => {
+  if (isRedirecting) return;
+  isRedirecting = true;
+  console.warn("🔐 401 Unauthorized – clearing token and redirecting to login");
+  localStorage.removeItem("token");
+  window.dispatchEvent(new Event("auth:unauthorized"));
+};
+
+/**
  * Helper to log when redirect would happen - actual redirect is handled by React Router
  * Returns true to indicate the caller should abort the API call
  */
 export const redirectToLogin = (): boolean => {
-  // Just log a warning - don't actually redirect
-  // React Router's ProtectedRoute component handles the actual redirect
   if (!isRedirecting) {
     console.warn("🔐 No authentication token found - API call aborted");
-    isRedirecting = true; // Prevent spam logging
+    isRedirecting = true;
   }
-  return true; // Tell caller to abort
+  return true;
 };
 
 /**

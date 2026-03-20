@@ -9,7 +9,6 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  DialogTrigger,
   Dropdown,
   makeStyles,
   Option,
@@ -46,6 +45,7 @@ import {
 } from "../types/backend";
 import { getStoredAuthToken, getUserIdFromJwt } from "../utils/authToken";
 
+import { useLanguage } from "../contexts/LanguageContext";
 import { useGlobalStyles } from "../styles/globalStyles";
 import { DrawEvent, Participant } from "../types/svenskaspel";
 
@@ -345,13 +345,11 @@ export default function Rounds(props: RoundProps) {
   const styles = useStyles();
   const globalStyles = useGlobalStyles();
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const { round: urlRound } = useParams<{ round: string }>();
 
   // UI-only state
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
-  const [matchFinalizeDialog, setMatchFinalizeDialog] = useState<number | null>(
-    null,
-  );
   const [expandedMatches, setExpandedMatches] = useState<Set<number>>(
     new Set(),
   );
@@ -594,6 +592,19 @@ export default function Rounds(props: RoundProps) {
   const drawEvents = roundData?.drawInfo?.draw?.events ?? [];
   const totalMatchCount = drawEvents.length;
 
+  // Finalize is allowed only when all matches are bet on, all 7 halvgarderingar are used, and not already finalized
+  // Only count matches where at least one bet choice (1/X/2) has been made — entries with bets:[] don't count
+  const placedBetsCount = Object.values(userBets).filter(
+    (b) => b.bets.length >= 1,
+  ).length;
+  const MAX_HALVGARDERINGAR = 7;
+  const canFinalize =
+    !isFinalized &&
+    totalMatchCount > 0 &&
+    placedBetsCount === totalMatchCount &&
+    halvgarderingCount === MAX_HALVGARDERINGAR &&
+    safeMatchNumber !== null;
+
   // All-confirmed: every match has a userBet with isFinalized: true
   const allConfirmed = useMemo(() => {
     if (totalMatchCount === 0) return false;
@@ -632,10 +643,10 @@ export default function Rounds(props: RoundProps) {
   const roundOptions = useMemo(() => {
     return props.availableRounds.map((round) => ({
       key: String(round.SPRoundNum),
-      text: `${round.Year} - Vecka ${round.Week}`,
+      text: t("rounds.roundLabel", { year: round.Year, week: round.Week }),
       value: round.SPRoundNum,
     }));
-  }, [props.availableRounds]);
+  }, [props.availableRounds, t]);
 
   // Handle round selection
   const handleRoundSelect = (_: any, data: any) => {
@@ -668,13 +679,15 @@ export default function Rounds(props: RoundProps) {
 
     const round = props.currentRound;
     const currentUserId = props.userId.toUpperCase();
+    // Normalize to uppercase so it matches API-loaded state ("X", not "x")
+    const normalizedBetType = betType.toUpperCase() as "1" | "X" | "2";
 
     // Read current state synchronously for constraint checks
     const currentUserBets =
       roundsCache[round]?.allUsersBets?.[currentUserId] ?? {};
     const currentMatchBet = currentUserBets[eventNumber];
     const currentBets = currentMatchBet?.bets ?? [];
-    const isRemoving = currentBets.includes(betType);
+    const isRemoving = currentBets.includes(normalizedBetType);
 
     // Per-match cap: cannot add a 3rd sign to the same match
     if (!isRemoving && currentBets.length >= 2) {
@@ -686,8 +699,8 @@ export default function Rounds(props: RoundProps) {
     if (!isRemoving && currentBets.length === 1 && currentMatchBet?.isSafe) {
       dispatchToast(
         <Toast>
-          <ToastTitle>Kan inte halvgarda säkermatch</ToastTitle>
-          <ToastBody>Ta bort säkermatch-märkningen först.</ToastBody>
+          <ToastTitle>{t("rounds.toast.cantHalvgardaSafe")}</ToastTitle>
+          <ToastBody>{t("rounds.toast.cantHalvgardaSafeBody")}</ToastBody>
         </Toast>,
         { intent: "warning" },
       );
@@ -702,10 +715,8 @@ export default function Rounds(props: RoundProps) {
     if (wouldBeHalv && currentHalvCount >= 7) {
       dispatchToast(
         <Toast>
-          <ToastTitle>Max 7 halvgarderingar</ToastTitle>
-          <ToastBody>
-            Du kan inte halvgarda fler matcher denna omgång.
-          </ToastBody>
+          <ToastTitle>{t("rounds.toast.maxHalvgarderingar")}</ToastTitle>
+          <ToastBody>{t("rounds.toast.maxHalvgarderingarBody")}</ToastBody>
         </Toast>,
         { intent: "warning" },
       );
@@ -714,8 +725,8 @@ export default function Rounds(props: RoundProps) {
 
     // Compute toggled bets array
     const newBets = isRemoving
-      ? currentBets.filter((b) => b !== betType)
-      : [...currentBets, betType];
+      ? currentBets.filter((b) => b !== normalizedBetType)
+      : [...currentBets, normalizedBetType];
 
     // Snapshot previous state so we can roll back if the save fails
     const previousBet = currentMatchBet;
@@ -780,8 +791,8 @@ export default function Rounds(props: RoundProps) {
 
       dispatchToast(
         <Toast>
-          <ToastTitle>Kunde inte spara tips</ToastTitle>
-          <ToastBody>Försök igen.</ToastBody>
+          <ToastTitle>{t("rounds.toast.saveFailed")}</ToastTitle>
+          <ToastBody>{t("rounds.toast.saveFailedBody")}</ToastBody>
         </Toast>,
         { intent: "error" },
       );
@@ -790,30 +801,49 @@ export default function Rounds(props: RoundProps) {
 
   // Handle safe match toggle
   const handleSafeToggle = async (eventNumber: number) => {
-    if (isFinalized) {
-      console.log("⛔ Bets are finalized, cannot change safe match");
-      return;
-    }
+    if (isFinalized) return;
 
-    if (!props.currentRound || props.currentRound <= 0) {
-      console.error("❌ Invalid round number:", props.currentRound);
-      return;
-    }
+    const round = props.currentRound;
+    if (!round || round <= 0) return;
 
-    const newSafeMatch = safeMatchNumber === eventNumber ? null : eventNumber;
+    const currentUserId = props.userId.toUpperCase();
+    const isCurrentlySafe = safeMatchNumber === eventNumber;
+    // Clicking the current safe match clears it; clicking another sets it
+    const newSafeMatchNumber = isCurrentlySafe ? null : eventNumber;
 
-    // Save to backend
-    try {
-      const bet = userBets[eventNumber];
-      if (bet) {
-        // await APIManager.toggleSafeMatch(currentRound, userId, eventNumber);
-        console.log(`✅ Safe match updated: ${newSafeMatch}`);
-
-        // Reload round data to get fresh state
-        await fetchRoundData(props.currentRound, true);
+    // Optimistic update: clear safe on all, set on target
+    setRoundsCache((prev) => {
+      const prevRound = prev[round];
+      if (!prevRound) return prev;
+      const prevUserBets = {
+        ...(prevRound.allUsersBets?.[currentUserId] ?? {}),
+      };
+      const updated: typeof prevUserBets = {};
+      for (const key of Object.keys(prevUserBets)) {
+        const evNum = Number(key);
+        updated[evNum] = {
+          ...prevUserBets[evNum],
+          isSafe: newSafeMatchNumber !== null && evNum === newSafeMatchNumber,
+        };
       }
+      return {
+        ...prev,
+        [round]: {
+          ...prevRound,
+          allUsersBets: {
+            ...prevRound.allUsersBets,
+            [currentUserId]: updated,
+          },
+        },
+      };
+    });
+
+    try {
+      await APIManager.setSafeMatch(round, newSafeMatchNumber ?? 0);
     } catch (error) {
-      console.error("Failed to update safe match:", error);
+      console.error("Failed to set safe match:", error);
+      // Revert by reloading fresh data
+      await fetchRoundData(round, true);
     }
   };
 
@@ -831,7 +861,7 @@ export default function Rounds(props: RoundProps) {
       // Show success toast
       dispatchToast(
         <Toast>
-          <ToastTitle>Data refreshed</ToastTitle>
+          <ToastTitle>{t("rounds.toast.refreshed")}</ToastTitle>
         </Toast>,
         { intent: "success", timeout: 2000 },
       );
@@ -843,8 +873,8 @@ export default function Rounds(props: RoundProps) {
       // Show error toast
       dispatchToast(
         <Toast>
-          <ToastTitle>Failed to refresh data</ToastTitle>
-          <ToastBody>Please try again.</ToastBody>
+          <ToastTitle>{t("rounds.toast.refreshFailed")}</ToastTitle>
+          <ToastBody>{t("common.retry")}</ToastBody>
         </Toast>,
         { intent: "error" },
       );
@@ -870,38 +900,6 @@ export default function Rounds(props: RoundProps) {
       await fetchRoundData(props.currentRound, true);
     } catch (error) {
       console.error("Failed to finalize round:", error);
-    }
-  };
-
-  // Handle finalize individual match
-  const handleFinalizeMatch = async (eventNumber: number) => {
-    if (!props.currentRound || props.currentRound <= 0) {
-      console.error("❌ Invalid round number:", props.currentRound);
-      return;
-    }
-
-    const bet = userBets[eventNumber];
-    if (!bet || bet.bets.length === 0) {
-      console.log("⛔ No bet placed for this match");
-      return;
-    }
-
-    try {
-      // Save bet with finalized flag
-      // await APIManager.finalizeMatch(
-      //   currentRound,
-      //   userId,
-      //   eventNumber,
-      //   bet.bets,
-      //   true
-      // );
-      setMatchFinalizeDialog(null);
-      console.log(`✅ Match ${eventNumber} finalized`);
-
-      // Reload round data to get fresh state
-      await fetchRoundData(props.currentRound, true);
-    } catch (error) {
-      console.error("Failed to finalize match:", error);
     }
   };
 
@@ -933,30 +931,30 @@ export default function Rounds(props: RoundProps) {
           }
 
           return {
-            status: "Finished",
+            status: "finished" as const,
             result: `${homeScore} - ${awayScore}`,
             outcome,
           };
         }
       }
 
-      return { status: "Finished", result: null, outcome: null };
+      return { status: "finished" as const, result: null, outcome: null };
     }
 
     if (status === "started" || status === "Started") {
-      return { status: "Started", result: null, outcome: null };
+      return { status: "started" as const, result: null, outcome: null };
     }
 
-    return { status: "Not started", result: null, outcome: null };
+    return { status: "not-started" as const, result: null, outcome: null };
   };
 
   // Derived: true only when every event in the round has not yet started
   const allMatchesNotStarted = useMemo(() => {
     if (!drawEvents || drawEvents.length === 0) return false;
     return drawEvents.every(
-      (event) => getMatchStatus(event).status === "Not started",
+      (event) => getMatchStatus(event).status === "not-started",
     );
-  }, [drawEvents]);
+  }, [drawEvents]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Calculate newspaper tips distribution
   const getNewspaperTipsArray = (event: DrawEvent) => {
@@ -986,7 +984,7 @@ export default function Rounds(props: RoundProps) {
       <PageContainer>
         <div className={globalStyles.loadingContainer}>
           <Spinner size="large" />
-          <Body1>Laddar...</Body1>
+          <Body1>{t("rounds.loading")}</Body1>
         </div>
       </PageContainer>
     );
@@ -998,7 +996,7 @@ export default function Rounds(props: RoundProps) {
       <PageContainer>
         <div className={globalStyles.loadingContainer}>
           <Spinner size="large" />
-          <Body1>Laddar...</Body1>
+          <Body1>{t("rounds.loading")}</Body1>
         </div>
       </PageContainer>
     );
@@ -1019,7 +1017,7 @@ export default function Rounds(props: RoundProps) {
           >
             <Sport24Regular style={{ verticalAlign: "middle" }} />
             {weekNumber && yearNumber
-              ? `${yearNumber} - Vecka ${weekNumber}`
+              ? t("rounds.roundLabel", { year: yearNumber, week: weekNumber })
               : ""}
             {roundSelectorOpen ? (
               <ChevronDownRegular style={{ fontSize: "20px" }} />
@@ -1029,10 +1027,11 @@ export default function Rounds(props: RoundProps) {
           </Title1>
           {roundSelectorOpen && (
             <Dropdown
-              placeholder="Välj omgång..."
+              placeholder={t("rounds.selectRound")}
               value={
                 roundOptions.find((opt) => opt.value === props.currentRound)
-                  ?.text || `Omgång ${props.currentRound}`
+                  ?.text ||
+                t("rounds.currentRoundFallback", { round: props.currentRound })
               }
               selectedOptions={[String(props.currentRound)]}
               onOptionSelect={handleRoundSelect}
@@ -1051,7 +1050,10 @@ export default function Rounds(props: RoundProps) {
           )}
           {!isFinalized && halvgarderingCount > 0 && (
             <Badge appearance="filled" color="informative">
-              {halvgarderingCount} / 7 halvgarderingar
+              {t("rounds.halvgarderingar", {
+                count: halvgarderingCount,
+                max: MAX_HALVGARDERINGAR,
+              })}
             </Badge>
           )}
           {isFinalized && (
@@ -1059,7 +1061,7 @@ export default function Rounds(props: RoundProps) {
               <LockClosedRegular
                 style={{ marginRight: "4px", verticalAlign: "middle" }}
               />
-              Avslutad
+              {t("rounds.finalized")}
             </Badge>
           )}
           {roundData?.drawInfo?.draw?.drawState &&
@@ -1071,7 +1073,7 @@ export default function Rounds(props: RoundProps) {
                 disabled={isRefreshing}
                 style={{ marginLeft: "auto" }}
               >
-                {isRefreshing ? "Refreshing..." : "Refresh Round Data"}
+                {isRefreshing ? t("rounds.refreshing") : t("rounds.refresh")}
               </Button>
             )}
         </div>
@@ -1135,22 +1137,27 @@ export default function Rounds(props: RoundProps) {
                     <Badge
                       appearance="tint"
                       color={
-                        matchStatus.status === "Finished"
+                        matchStatus.status === "finished"
                           ? "success"
-                          : matchStatus.status === "Started"
+                          : matchStatus.status === "started"
                             ? "warning"
                             : "informative"
                       }
                       className={styles.statusBadge}
                     >
-                      {matchStatus.status}
+                      {matchStatus.status === "finished"
+                        ? t("rounds.statusFinished")
+                        : matchStatus.status === "started"
+                          ? t("rounds.statusStarted")
+                          : t("rounds.statusNotStarted")}
                     </Badge>
                   )}
                 </div>
                 {/* Teams and Score */}
                 <div className={styles.teams}>
                   <div className={`${styles.teamName} ${styles.homeTeam}`}>
-                    {homeParticipant?.name?.replace(/\s*\(\d+\)$/, "") || "TBD"}
+                    {homeParticipant?.name?.replace(/\s*\(\d+\)$/, "") ||
+                      t("common.unknown")}
                   </div>
                   <div className={styles.score}>
                     {matchStatus.result ? (
@@ -1160,7 +1167,8 @@ export default function Rounds(props: RoundProps) {
                     )}
                   </div>
                   <div className={`${styles.teamName} ${styles.awayTeam}`}>
-                    {awayParticipant?.name?.replace(/\s*\(\d+\)$/, "") || "TBD"}
+                    {awayParticipant?.name?.replace(/\s*\(\d+\)$/, "") ||
+                      t("common.unknown")}
                   </div>
                 </div>
 
@@ -1173,113 +1181,84 @@ export default function Rounds(props: RoundProps) {
                     justifyContent: "flex-end",
                   }}
                 >
-                  <span className={styles.myBetsLabel}>Mitt tips</span>
+                  <span className={styles.myBetsLabel}>
+                    {t("rounds.myBet")}
+                  </span>
                   <div className={styles.betBoxesContainer}>
-                    {["1", "x", "2"].map((betType) => (
-                      <div
-                        key={betType}
-                        className={`${styles.betBox} ${
-                          userBet?.bets.includes(
-                            betType.toLowerCase() as "1" | "X" | "2",
-                          )
-                            ? styles.betBoxSelected
-                            : ""
-                        }`}
-                        onClick={() =>
-                          allMatchesNotStarted &&
-                          !userBet?.isFinalized &&
-                          !isFinalized
-                            ? handleBetChange(
-                                event.eventNumber,
-                                betType.toLowerCase() as "1" | "x" | "2",
-                              )
-                            : null
-                        }
-                        style={{
-                          opacity:
-                            !allMatchesNotStarted ||
-                            userBet?.isFinalized ||
-                            isFinalized
-                              ? 0.6
-                              : 1,
-                          cursor:
+                    {(() => {
+                      return ["1", "x", "2"].map((betType) => (
+                        <div
+                          key={betType}
+                          className={`${styles.betBox} ${
+                            userBet?.bets.includes(
+                              betType.toUpperCase() as "1" | "X" | "2",
+                            )
+                              ? styles.betBoxSelected
+                              : ""
+                          }`}
+                          onClick={() =>
                             allMatchesNotStarted &&
                             !userBet?.isFinalized &&
                             !isFinalized
-                              ? "pointer"
-                              : "default",
-                        }}
-                      >
-                        {betType}
-                      </div>
-                    ))}
+                              ? handleBetChange(
+                                  event.eventNumber,
+                                  betType.toLowerCase() as "1" | "x" | "2",
+                                )
+                              : null
+                          }
+                          style={{
+                            opacity:
+                              !allMatchesNotStarted ||
+                              userBet?.isFinalized ||
+                              isFinalized
+                                ? 0.6
+                                : 1,
+                            cursor:
+                              allMatchesNotStarted &&
+                              !userBet?.isFinalized &&
+                              !isFinalized
+                                ? "pointer"
+                                : "default",
+                          }}
+                        >
+                          {betType}
+                        </div>
+                      ));
+                    })()}
                     <Tooltip
                       content={
-                        (userBet?.isFinalized || isFinalized) && !isAdmin
-                          ? "Säker match (låst)"
-                          : userBet?.isFinalized || isFinalized
-                            ? "Säker match (admin kan ändra)"
-                            : userBet && userBet.bets.length >= 2
-                              ? "Halvgardering kan inte vara säkermatch"
-                              : userBet && userBet.bets.length === 1
-                                ? "Klicka för att markera som säkermatch"
-                                : "Placera ett tips först"
+                        !allMatchesNotStarted
+                          ? t("rounds.tooltipRoundStarted")
+                          : userBet && userBet.bets.length >= 2
+                            ? t("rounds.tooltipCantHalvgardaSafe")
+                            : userBet && userBet.bets.length === 1
+                              ? safeMatchNumber === event.eventNumber
+                                ? t("rounds.tooltipRemoveSafe")
+                                : t("rounds.tooltipSetSafe")
+                              : t("rounds.tooltipPlaceBetFirst")
                       }
                       relationship="label"
                     >
                       <ShieldCheckmarkRegular
                         fontSize={20}
                         onClick={() =>
+                          allMatchesNotStarted &&
                           userBet &&
                           userBet.bets.length === 1 &&
-                          ((!userBet.isFinalized && !isFinalized) || isAdmin) &&
+                          !isFinalized &&
                           handleSafeToggle(event.eventNumber)
                         }
                         style={{
                           cursor:
-                            !userBet ||
-                            userBet.bets.length !== 1 ||
-                            ((userBet.isFinalized || isFinalized) && !isAdmin)
-                              ? "default"
-                              : "pointer",
+                            allMatchesNotStarted &&
+                            userBet &&
+                            userBet.bets.length === 1 &&
+                            !isFinalized
+                              ? "pointer"
+                              : "default",
                           opacity:
                             safeMatchNumber === event.eventNumber ? 1 : 0.3,
                           color: tokens.colorStatusSuccessForeground1,
-                        }}
-                      />
-                    </Tooltip>
-                    <Tooltip
-                      content={
-                        (userBet?.isFinalized || isFinalized) && !isAdmin
-                          ? "Match bekräftad (låst)"
-                          : userBet?.isFinalized || isFinalized
-                            ? "Match bekräftad (admin kan ändra)"
-                            : userBet && userBet.bets.length > 0
-                              ? "Klicka för att bekräfta tipset"
-                              : "Placera ett tips först"
-                      }
-                      relationship="label"
-                    >
-                      <LockClosedRegular
-                        fontSize={20}
-                        onClick={() =>
-                          userBet &&
-                          userBet.bets.length > 0 &&
-                          ((!userBet.isFinalized && !isFinalized) || isAdmin) &&
-                          setMatchFinalizeDialog(event.eventNumber)
-                        }
-                        style={{
-                          cursor:
-                            !userBet ||
-                            userBet.bets.length === 0 ||
-                            ((userBet.isFinalized || isFinalized) && !isAdmin)
-                              ? "default"
-                              : "pointer",
-                          opacity: userBet?.isFinalized ? 1 : 0.3,
-                          color: userBet?.isFinalized
-                            ? tokens.colorStatusSuccessForeground1
-                            : tokens.colorNeutralForeground3,
-                          marginLeft: "8px",
                         }}
                       />
                     </Tooltip>
@@ -1301,7 +1280,9 @@ export default function Rounds(props: RoundProps) {
                         </thead>
                         <tbody>
                           <tr className={styles.tableRow}>
-                            <td className={styles.rowLabel}>Odds</td>
+                            <td className={styles.rowLabel}>
+                              {t("rounds.odds")}
+                            </td>
                             <td className={styles.tableCell}>
                               <span className={styles.cellValue}>
                                 {event.odds?.home || "-"}
@@ -1319,7 +1300,9 @@ export default function Rounds(props: RoundProps) {
                             </td>
                           </tr>
                           <tr className={styles.tableRow}>
-                            <td className={styles.rowLabel}>Svenska Folket</td>
+                            <td className={styles.rowLabel}>
+                              {t("rounds.publicVote")}
+                            </td>
                             <td className={styles.tableCell}>
                               <span className={styles.cellValue}>
                                 {distTotal > 0
@@ -1360,7 +1343,7 @@ export default function Rounds(props: RoundProps) {
                               return (
                                 <tr className={styles.tableRow}>
                                   <td className={styles.rowLabel}>
-                                    10 Tidningars Tips
+                                    {t("rounds.newspaperTips")}
                                   </td>
                                   <td className={styles.tableCell}>
                                     <span className={styles.cellValue}>
@@ -1391,7 +1374,7 @@ export default function Rounds(props: RoundProps) {
                         <thead className={styles.tableHeader}>
                           <tr>
                             <th className={styles.tableHeaderCell}>
-                              Streckfördelning
+                              {t("rounds.distribution")}
                             </th>
                             <th className={styles.tableHeaderCell}>1</th>
                             <th className={styles.tableHeaderCell}>X</th>
@@ -1424,10 +1407,10 @@ export default function Rounds(props: RoundProps) {
                                   }}
                                 >
                                   {betFilters[event.eventNumber]
-                                    ? `Filtrerat: ${
-                                        betFilters[event.eventNumber]
-                                      }`
-                                    : "Alla deltagare"}
+                                    ? t("rounds.filtered", {
+                                        bet: betFilters[event.eventNumber]!,
+                                      })
+                                    : t("rounds.allParticipants")}
                                 </span>
                                 {betFilters[event.eventNumber] && (
                                   <DismissRegular
@@ -1568,12 +1551,12 @@ export default function Rounds(props: RoundProps) {
                             return (
                               <div className={styles.userBetRow}>
                                 <span className={styles.myBetsLabel}>
-                                  Mitt tips
+                                  {t("rounds.myBet")}
                                 </span>
                                 <div className={styles.betBoxesContainer}>
                                   {safeMatchNumber === event.eventNumber && (
                                     <Tooltip
-                                      content="Säker match"
+                                      content={t("common.safeMatch")}
                                       relationship="label"
                                     >
                                       <ShieldCheckmarkRegular
@@ -1601,7 +1584,7 @@ export default function Rounds(props: RoundProps) {
                                   ))}
                                   {isFinalized && (
                                     <Tooltip
-                                      content="Bekräftad"
+                                      content={t("common.confirmed")}
                                       relationship="label"
                                     >
                                       <LockClosedRegular
@@ -1670,7 +1653,7 @@ export default function Rounds(props: RoundProps) {
                                   <div className={styles.betBoxesContainer}>
                                     {otherUserBet.isSafe && (
                                       <Tooltip
-                                        content="Säker match"
+                                        content={t("common.safeMatch")}
                                         relationship="label"
                                       >
                                         <ShieldCheckmarkRegular
@@ -1700,7 +1683,7 @@ export default function Rounds(props: RoundProps) {
                                     ))}
                                     {otherUserIsFinalized && (
                                       <Tooltip
-                                        content="Bekräftad"
+                                        content={t("common.confirmed")}
                                         relationship="label"
                                       >
                                         <LockClosedRegular
@@ -1726,80 +1709,136 @@ export default function Rounds(props: RoundProps) {
           })}
       </div>
 
-      {/* Finalize Button */}
-      {!isFinalized && Object.keys(userBets).length > 0 && (
-        <Dialog open={showFinalizeDialog}>
-          <DialogTrigger disableButtonEnhancement>
+      {/* Finalize Button — always visible while round is open, disabled when conditions not met */}
+      {roundData?.drawInfo?.draw?.drawState?.toLowerCase() === "open" && (
+        <div style={{ marginTop: "16px" }}>
+          {/* Validation hints */}
+          {isFinalized && (
+            <Body1
+              style={{
+                display: "block",
+                color: tokens.colorStatusSuccessForeground1,
+                marginBottom: "8px",
+              }}
+            >
+              {t("rounds.hintAlreadyConfirmed")}
+            </Body1>
+          )}
+          {!isFinalized &&
+            totalMatchCount > 0 &&
+            placedBetsCount < totalMatchCount && (
+              <Body1
+                style={{
+                  display: "block",
+                  color: tokens.colorStatusDangerForeground1,
+                  marginBottom: "8px",
+                }}
+              >
+                {t("rounds.hintMissingBets", {
+                  total: totalMatchCount,
+                  placed: placedBetsCount,
+                })}
+              </Body1>
+            )}
+          {!isFinalized &&
+            totalMatchCount > 0 &&
+            placedBetsCount === totalMatchCount &&
+            halvgarderingCount < MAX_HALVGARDERINGAR && (
+              <Body1
+                style={{
+                  display: "block",
+                  color: tokens.colorStatusDangerForeground1,
+                  marginBottom: "8px",
+                }}
+              >
+                {t("rounds.hintMissingHalv", {
+                  max: MAX_HALVGARDERINGAR,
+                  count: halvgarderingCount,
+                })}
+              </Body1>
+            )}
+          {!isFinalized &&
+            totalMatchCount > 0 &&
+            placedBetsCount === totalMatchCount &&
+            halvgarderingCount === MAX_HALVGARDERINGAR &&
+            safeMatchNumber === null && (
+              <Body1
+                style={{
+                  display: "block",
+                  color: tokens.colorStatusDangerForeground1,
+                  marginBottom: "8px",
+                }}
+              >
+                {t("rounds.hintMissingSafe")}
+              </Body1>
+            )}
+
+          {/* The button — disabled with tooltip when validation fails */}
+          {canFinalize ? (
             <Button
               appearance="primary"
-              style={{ marginTop: "16px", width: "100%" }}
+              style={{ width: "100%" }}
               onClick={() => setShowFinalizeDialog(true)}
             >
-              Slutför tips
+              {t("rounds.finalizeButton")}
             </Button>
-          </DialogTrigger>
-          <DialogSurface>
-            <DialogBody>
-              <DialogTitle>Bekräfta slutförande</DialogTitle>
-              <DialogContent>
-                <Body1>
-                  Är du säker på att du vill slutföra dina tips? Efter detta kan
-                  du inte längre ändra dina val.
-                </Body1>
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  appearance="secondary"
-                  onClick={() => setShowFinalizeDialog(false)}
-                >
-                  Avbryt
-                </Button>
-                <Button appearance="primary" onClick={handleFinalizeRound}>
-                  Slutför
-                </Button>
-              </DialogActions>
-            </DialogBody>
-          </DialogSurface>
-        </Dialog>
-      )}
+          ) : (
+            <Tooltip
+              content={
+                isFinalized
+                  ? t("rounds.finalizeTooltipAlready")
+                  : placedBetsCount < totalMatchCount
+                    ? t("rounds.finalizeTooltipMissingBets", {
+                        total: totalMatchCount,
+                      })
+                    : halvgarderingCount < MAX_HALVGARDERINGAR
+                      ? t("rounds.finalizeTooltipMissingHalv", {
+                          max: MAX_HALVGARDERINGAR,
+                        })
+                      : t("rounds.finalizeTooltipMissingSafe")
+              }
+              relationship="description"
+            >
+              <Button appearance="primary" style={{ width: "100%" }} disabled>
+                {t("rounds.finalizeButton")}
+              </Button>
+            </Tooltip>
+          )}
 
-      {/* Match Finalize Dialog */}
-      {matchFinalizeDialog !== null && (
-        <Dialog
-          open={true}
-          onOpenChange={(_e, data) =>
-            !data.open && setMatchFinalizeDialog(null)
-          }
-        >
-          <DialogSurface>
-            <DialogBody>
-              <DialogTitle>
-                Bekräfta tips för match {matchFinalizeDialog}
-              </DialogTitle>
-              <DialogContent>
-                <Body1>
-                  Är du säker på att du vill bekräfta ditt tips för denna match?
-                  Efter bekräftelsen kan du inte längre ändra ditt val för denna
-                  match.
-                </Body1>
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  appearance="secondary"
-                  onClick={() => setMatchFinalizeDialog(null)}
-                >
-                  Avbryt
-                </Button>
-                <Button
-                  appearance="primary"
-                  onClick={() => handleFinalizeMatch(matchFinalizeDialog)}
-                >
-                  Bekräfta
-                </Button>
-              </DialogActions>
-            </DialogBody>
-          </DialogSurface>
-        </Dialog>
+          {/* Confirm dialog */}
+          <Dialog open={showFinalizeDialog}>
+            <DialogSurface>
+              <DialogBody>
+                <DialogTitle>{t("rounds.finalizeDialogTitle")}</DialogTitle>
+                <DialogContent>
+                  <Body1 style={{ display: "block", marginBottom: "12px" }}>
+                    {t("rounds.finalizeDialogText")}
+                  </Body1>
+                  <Body1
+                    style={{
+                      display: "block",
+                      fontWeight: 600,
+                      color: tokens.colorStatusWarningForeground1,
+                    }}
+                  >
+                    {t("rounds.finalizeDialogWarning")}
+                  </Body1>
+                </DialogContent>
+                <DialogActions>
+                  <Button
+                    appearance="secondary"
+                    onClick={() => setShowFinalizeDialog(false)}
+                  >
+                    {t("rounds.finalizeCancel")}
+                  </Button>
+                  <Button appearance="primary" onClick={handleFinalizeRound}>
+                    {t("rounds.finalizeConfirm")}
+                  </Button>
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>
+        </div>
       )}
     </PageContainer>
   );

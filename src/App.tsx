@@ -9,20 +9,26 @@ import {
   Route,
   BrowserRouter as Router,
   Routes,
+  useNavigate,
   useParams,
 } from "react-router-dom";
 import "./App.css";
 import { PageContainer } from "./components/PageContainer";
+import { AppDataContext } from "./contexts/AppDataContext";
+import { LanguageProvider } from "./contexts/LanguageContext";
 import Betting from "./pages/Betting";
+import Elimineringen from "./pages/Elimineringen.tsx";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Profile from "./pages/Profile";
 import Rounds from "./pages/Rounds";
 import Standings from "./pages/Standings";
 import { APIManager } from "./services/APIManager";
+import { BaseStat } from "./services/StandingsCalculationService";
 import { Round, RoundData } from "./store/roundsSlice";
 import { BackendUser } from "./types/backend";
 import { roundSet } from "./types/round";
+import { resetRedirectFlag } from "./utils/authHelpers";
 import { getStoredAuthToken, getUserIdFromJwt } from "./utils/authToken";
 
 export type { Round, RoundData };
@@ -112,6 +118,70 @@ function RoundsRedirect({
   return <Navigate to={`/rounds/${syncedRound}`} replace />;
 }
 
+// Redirect to the active round if the user has unconfirmed bets.
+// Keeps a spinner until availableRounds is populated, then checks once.
+function HomeRedirect({ availableRounds }: { availableRounds: Round[] }) {
+  const navigate = useNavigate();
+  const [checked, setChecked] = useState(false);
+  // Prevent the API call from firing more than once even as availableRounds re-renders
+  const hasApiCalled = useRef(false);
+
+  useEffect(() => {
+    // Wait until rounds have loaded from the backend
+    if (availableRounds.length === 0) return;
+    // Only make the API call once
+    if (hasApiCalled.current) return;
+    hasApiCalled.current = true;
+
+    const checkUnconfirmedBets = async () => {
+      // Find the latest round that is not yet finished (still open for betting)
+      const activeRound = availableRounds.find((r) => !r.Finished);
+      if (!activeRound) {
+        setChecked(true);
+        return;
+      }
+
+      try {
+        const bets = await APIManager.getUserBetsForRound(
+          activeRound.SPRoundNum,
+        );
+        const allFinalized =
+          bets.length > 0 &&
+          bets.every((bet: any) => bet.Final === true || bet.final === true);
+        // Redirect if no bets placed yet, or if any bet is not finalized
+        if (bets.length === 0 || !allFinalized) {
+          navigate(`/rounds/${activeRound.SPRoundNum}`, { replace: true });
+          return;
+        }
+      } catch {
+        // On error, fall through to show Home normally
+      }
+      setChecked(true);
+    };
+
+    checkUnconfirmedBets();
+  }, [availableRounds, navigate]);
+
+  if (!checked) {
+    return (
+      <PageContainer>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            minHeight: "60vh",
+          }}
+        >
+          <Spinner size="large" />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  return <Home />;
+}
+
 // Wrapper component for Rounds route to get URL parameter
 function RoundsWrapper({
   availableRounds,
@@ -143,12 +213,26 @@ function App() {
   const [userDisplayNames, setUserDisplayNames] = useState<
     Record<string, string>
   >({});
+  const [baseStats, setBaseStats] = useState<BaseStat[]>([]);
+  const [baseStatsLoading, setBaseStatsLoading] = useState(true);
 
   // Derive userId from the stored JWT token
   const userId = useMemo(() => {
     if (!token) return "";
     return getUserIdFromJwt(token) ?? "";
   }, [token]);
+
+  // Listen for global 401 events emitted by apiFetch in APIManager
+  useEffect(() => {
+    const onUnauthorized = () => {
+      hasInitialized.current = false;
+      setToken(null);
+      setAvailableRounds([]);
+    };
+    window.addEventListener("auth:unauthorized", onUnauthorized);
+    return () =>
+      window.removeEventListener("auth:unauthorized", onUnauthorized);
+  }, []);
 
   // Track if initialization has run to ensure it only runs once per page load
   const hasInitialized = useRef(false);
@@ -187,6 +271,7 @@ function App() {
       // If not authenticated, skip initialization and let the login page render
       if (!token) {
         console.log("⏳ Not authenticated, skipping round initialization");
+        setBaseStatsLoading(false);
         return;
       }
 
@@ -238,6 +323,20 @@ function App() {
           console.warn("⚠️ Could not fetch user display names:", error);
         }
 
+        // Fetch base stats for the current year — shared across all pages.
+        try {
+          const year = new Date().getFullYear();
+          const stats = await APIManager.getElimineringenBaseStatsForYear(year);
+          setBaseStats(stats as BaseStat[]);
+          console.log(
+            `✅ Loaded ${(stats as BaseStat[]).length} base stats for ${year}`,
+          );
+        } catch (error) {
+          console.warn("⚠️ Could not fetch base stats:", error);
+        } finally {
+          setBaseStatsLoading(false);
+        }
+
         // Set latest round as current
         if (roundsWithData.length > 0) {
           const latestRound = roundsWithData[0].SPRoundNum;
@@ -245,6 +344,7 @@ function App() {
         }
       } catch (error) {
         console.error("❌ Failed to initialize rounds:", error);
+        setBaseStatsLoading(false);
       }
     };
     initializeRounds();
@@ -263,72 +363,105 @@ function App() {
   // }
 
   // If no token, show login page immediately
-  if (!getStoredAuthToken()) {
+  if (!token) {
     return (
-      <FluentProvider theme={webLightTheme}>
-        <Router>
-          <Routes>
-            <Route
-              path="*"
-              element={<Login onSuccess={(newToken) => setToken(newToken)} />}
-            />
-          </Routes>
-        </Router>
-      </FluentProvider>
+      <LanguageProvider>
+        <AppDataContext.Provider
+          value={{ baseStats, baseStatsLoading, userDisplayNames }}
+        >
+          <FluentProvider theme={webLightTheme}>
+            <Router>
+              <Routes>
+                <Route
+                  path="*"
+                  element={
+                    <Login
+                      onSuccess={(newToken) => {
+                        resetRedirectFlag();
+                        setToken(newToken);
+                      }}
+                    />
+                  }
+                />
+              </Routes>
+            </Router>
+          </FluentProvider>
+        </AppDataContext.Provider>
+      </LanguageProvider>
     );
   }
-
-  // If authenticated, show the main app
   return (
-    <FluentProvider theme={webLightTheme}>
-      <Router>
-        {/* <RoundSync
+    <LanguageProvider>
+      <AppDataContext.Provider
+        value={{ baseStats, baseStatsLoading, userDisplayNames }}
+      >
+        <FluentProvider theme={webLightTheme}>
+          <Router>
+            {/* <RoundSync
           availableRounds={availableRounds}
           currentRound={currentRound}
           setCurrentRound={setCurrentRound}
         /> */}
 
-        <Routes>
-          <Route
-            path="/login"
-            element={<Login onSuccess={(newToken) => setToken(newToken)} />}
-          />
-          <Route path="/" element={<Home />} />
-
-          <Route
-            path="/rounds"
-            element={
-              <RoundsRedirect
-                availableRounds={availableRounds}
-                currentRound={currentRound}
-                onRoundsUpdated={refreshAvailableRounds}
+            <Routes>
+              <Route
+                path="/login"
+                element={
+                  <Login
+                    onSuccess={(newToken) => {
+                      resetRedirectFlag();
+                      setToken(newToken);
+                    }}
+                  />
+                }
               />
-            }
-          />
-
-          <Route
-            path="/rounds/:round"
-            element={
-              <RoundsWrapper
-                availableRounds={availableRounds}
-                userId={userId}
-                userDisplayNames={userDisplayNames}
+              <Route
+                path="/"
+                element={<HomeRedirect availableRounds={availableRounds} />}
               />
-            }
-          />
 
-          <Route path="/standings/:scope" element={<Standings />} />
-          <Route
-            path="/standings"
-            element={<Navigate replace to="/standings/year" />}
-          />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/betting" element={<Betting />} />
-          {/* Redirect any unknown routes to home */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
-    </FluentProvider>
+              <Route path="/kronika" element={<Home />} />
+
+              <Route
+                path="/rounds"
+                element={
+                  <RoundsRedirect
+                    availableRounds={availableRounds}
+                    currentRound={currentRound}
+                    onRoundsUpdated={refreshAvailableRounds}
+                  />
+                }
+              />
+
+              <Route
+                path="/rounds/:round"
+                element={
+                  <RoundsWrapper
+                    availableRounds={availableRounds}
+                    userId={userId}
+                    userDisplayNames={userDisplayNames}
+                  />
+                }
+              />
+
+              <Route path="/standings/:scope" element={<Standings />} />
+              <Route
+                path="/standings"
+                element={<Navigate replace to="/standings/year" />}
+              />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/betting" element={<Betting />} />
+              <Route
+                path="/deltavlingar/elimineringen"
+                element={<Elimineringen />}
+              />
+              {/* Redirect any unknown routes to home */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Router>
+        </FluentProvider>
+      </AppDataContext.Provider>
+    </LanguageProvider>
   );
 }
 

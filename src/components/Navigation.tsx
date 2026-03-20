@@ -19,6 +19,7 @@ import {
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useLanguage } from "../contexts/LanguageContext";
 import { clearAuthToken } from "../utils/authHelpers";
 import { getISOWeek, getSwedishMonthLabel } from "../utils/dateUtils";
 
@@ -192,18 +193,72 @@ const useStyles = makeStyles({
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },
   },
+  flagButton: {
+    lineHeight: 1,
+    cursor: "pointer",
+    background: "none",
+    ...shorthands.border("none"),
+    ...shorthands.padding("2px", "4px"),
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    transition: "opacity 0.15s",
+    ":hover": {
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+    },
+  },
+  flagButtonActive: {
+    opacity: "0.35",
+    cursor: "default",
+    pointerEvents: "none" as const,
+  },
 });
+
+const SvFlag = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 14"
+    width="24"
+    height="17"
+    style={{ borderRadius: 2, display: "block" }}
+  >
+    <rect width="20" height="14" fill="#006AA7" />
+    <rect x="5" width="4" height="14" fill="#FECC02" />
+    <rect y="5" width="20" height="4" fill="#FECC02" />
+  </svg>
+);
+
+const GbFlag = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 14"
+    width="24"
+    height="17"
+    style={{ borderRadius: 2, display: "block" }}
+  >
+    <rect width="20" height="14" fill="#012169" />
+    <polygon fill="white" points="0,0 20,14 17.5,14 0,2.3" />
+    <polygon fill="white" points="20,0 0,14 2.5,14 20,2.3" />
+    <polygon fill="white" points="0,14 2.5,14 20,2.3 20,0 17.5,0 0,11.7" />
+    <polygon fill="white" points="20,14 17.5,14 0,11.7 0,0 2.5,0 20,12.6" />
+    <rect x="0" y="4.7" width="20" height="4.7" fill="white" />
+    <rect x="7.5" y="0" width="5" height="14" fill="white" />
+    <polygon fill="#C8102E" points="0,0 1.5,0 20,12.5 20,14 18.5,14 0,1.5" />
+    <polygon fill="#C8102E" points="20,0 18.5,0 0,12.5 0,14 1.5,14 20,1.5" />
+    <rect x="0" y="5.8" width="20" height="2.3" fill="#C8102E" />
+    <rect x="8.5" y="0" width="3" height="14" fill="#C8102E" />
+  </svg>
+);
 
 export function Navigation() {
   const styles = useStyles();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t, language, setLanguage } = useLanguage();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isStandingsExpanded, setIsStandingsExpanded] = useState(false);
   // Determine which tab is active based on the current path
   const getActivePage = () => {
     const path = location.pathname;
-    if (path === "/" || path.startsWith("/home")) return "home";
+    if (path === "/" || path.startsWith("/kronika")) return "home";
     if (path.startsWith("/rounds")) return "rounds";
     if (path.startsWith("/standings")) return "standings";
     if (path.startsWith("/profile")) return "profile";
@@ -227,28 +282,38 @@ export function Navigation() {
   const navMonth = navNow.getMonth() + 1;
   const navWeek = getISOWeek(navNow);
   const standingsSubItems = [
-    { label: `Totalen ${navYear}`, path: "/standings/year" },
     {
-      label: `Aktuell månad (${getSwedishMonthLabel(navMonth, navYear)})`,
+      label: t("nav.standingsYear", { year: navYear }),
+      path: "/standings/year",
+    },
+    {
+      label: t("nav.standingsMonth", {
+        month: getSwedishMonthLabel(navMonth, navYear),
+      }),
       path: "/standings/month",
     },
     {
-      label: `Aktuell vecka (v${navWeek} ${navYear})`,
+      label: t("nav.standingsWeek", { week: navWeek, year: navYear }),
       path: "/standings/week",
     },
-    { label: "Filtrerad", path: "/standings/filter" },
+    { label: t("nav.standingsFiltered"), path: "/standings/filter" },
   ];
   const menuItems = [
-    { id: "home", label: "Hem", icon: <Home24Regular />, path: "/" },
+    {
+      id: "home",
+      label: t("nav.home"),
+      icon: <Home24Regular />,
+      path: "/kronika",
+    },
     {
       id: "rounds",
-      label: "Omgångar",
+      label: t("nav.rounds"),
       icon: <Sport24Regular />,
       path: "/rounds",
     },
     {
       id: "profile",
-      label: "Profil",
+      label: t("nav.profile"),
       icon: <PersonRegular />,
       path: "/profile",
     },
@@ -286,7 +351,7 @@ export function Navigation() {
                   }`}
                 >
                   <TrophyRegular />
-                  <span>Tabeller</span>
+                  <span>{t("nav.standings")}</span>
                 </button>
               </MenuTrigger>
               <MenuPopover>
@@ -306,6 +371,24 @@ export function Navigation() {
         </div>
 
         <div className={styles.topNavRight}>
+          {/* Language switcher */}
+          <button
+            className={`${styles.flagButton} ${language === "sv" ? styles.flagButtonActive : ""}`}
+            onClick={() => setLanguage("sv")}
+            aria-label="Svenska"
+            title="Svenska"
+          >
+            <SvFlag />
+          </button>
+          <button
+            className={`${styles.flagButton} ${language === "en" ? styles.flagButtonActive : ""}`}
+            onClick={() => setLanguage("en")}
+            aria-label="English"
+            title="English"
+          >
+            <GbFlag />
+          </button>
+
           {/* Desktop logout button */}
           <Button
             appearance="subtle"
@@ -313,7 +396,7 @@ export function Navigation() {
             onClick={handleLogout}
             className={styles.logoutButton}
           >
-            Logga ut
+            {t("nav.logout")}
           </Button>
 
           {/* Mobile burger button */}
@@ -322,7 +405,7 @@ export function Navigation() {
             icon={<Navigation24Regular />}
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
             className={styles.burgerButton}
-            aria-label="Toggle menu"
+            aria-label={t("nav.toggleMenu")}
           />
         </div>
       </nav>
@@ -367,7 +450,9 @@ export function Navigation() {
             onClick={() => setIsStandingsExpanded((prev) => !prev)}
           >
             <TrophyRegular />
-            <span>Tabeller {isStandingsExpanded ? "▲" : "▼"}</span>
+            <span>
+              {t("nav.standings")} {isStandingsExpanded ? "▲" : "▼"}
+            </span>
           </button>
           {isStandingsExpanded &&
             standingsSubItems.map((sub) => (
@@ -382,13 +467,31 @@ export function Navigation() {
         </div>
 
         <div className={styles.sidebarFooter}>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <button
+              className={`${styles.flagButton} ${language === "sv" ? styles.flagButtonActive : ""}`}
+              onClick={() => setLanguage("sv")}
+              aria-label="Svenska"
+              title="Svenska"
+            >
+              <SvFlag />
+            </button>
+            <button
+              className={`${styles.flagButton} ${language === "en" ? styles.flagButtonActive : ""}`}
+              onClick={() => setLanguage("en")}
+              aria-label="English"
+              title="English"
+            >
+              <GbFlag />
+            </button>
+          </div>
           <Button
             appearance="subtle"
             icon={<SignOut24Regular />}
             onClick={handleLogout}
             style={{ width: "100%" }}
           >
-            Logga ut
+            {t("nav.logout")}
           </Button>
         </div>
       </nav>

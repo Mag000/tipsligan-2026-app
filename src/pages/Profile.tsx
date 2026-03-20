@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { PageContainer } from "../components/PageContainer";
 
 import { PageHeader } from "../components/PageHeader";
+import { useLanguage } from "../contexts/LanguageContext";
 import { useGlobalStyles } from "../styles/globalStyles";
 import { clearAuthToken } from "../utils/authHelpers";
 import { decodeAuthToken, getStoredAuthToken } from "../utils/authToken";
@@ -46,6 +47,7 @@ export default function Profile() {
   const styles = useStyles();
   const globalStyles = useGlobalStyles();
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const handleLogout = () => {
     clearAuthToken();
     navigate("/login");
@@ -58,12 +60,16 @@ export default function Profile() {
     <PageContainer>
       <PageHeader
         icon={<Person24Regular fontSize={32} />}
-        title="Min Profil"
-        subtitle="Din statistik och prestationer"
+        title={t("profile.title")}
+        subtitle={t("profile.subtitle")}
         stats={[
-          { label: "Poäng", value: 45, color: "brand" },
-          { label: "Placering", value: "3:a", color: "success" },
-          { label: "Rätt resultat", value: 12, color: "informative" },
+          { label: t("profile.points"), value: 45, color: "brand" },
+          { label: t("profile.rank"), value: "3:a", color: "success" },
+          {
+            label: t("profile.correctResults"),
+            value: 12,
+            color: "informative",
+          },
         ]}
       />{" "}
       <Card className={globalStyles.cardLarge}>
@@ -71,7 +77,7 @@ export default function Profile() {
           <Person24Regular />
         </div>
         <Title1>{user?.username || "Johan Andersson"}</Title1>
-        <Body1>Medlem sedan 2026</Body1>
+        <Body1>{t("profile.memberSince", { year: 2026 })}</Body1>
 
         <div className={globalStyles.statsGrid} style={{ marginTop: "24px" }}>
           <Card
@@ -82,7 +88,7 @@ export default function Profile() {
               style={{ fontSize: "32px", marginBottom: "8px" }}
             />
             <span className={styles.statValue}>45</span>
-            <Body1>Totala poäng</Body1>
+            <Body1>{t("profile.totalPoints")}</Body1>
           </Card>
 
           <Card
@@ -93,7 +99,7 @@ export default function Profile() {
               style={{ fontSize: "32px", marginBottom: "8px" }}
             />
             <span className={styles.statValue}>3</span>
-            <Body1>Placering</Body1>
+            <Body1>{t("profile.rank")}</Body1>
           </Card>
 
           <Card
@@ -104,7 +110,7 @@ export default function Profile() {
               style={{ fontSize: "32px", marginBottom: "8px" }}
             />{" "}
             <span className={styles.statValue}>12</span>
-            <Body1>Rätt resultat</Body1>
+            <Body1>{t("profile.correctResults")}</Body1>
           </Card>
         </div>
 
@@ -115,7 +121,7 @@ export default function Profile() {
           style={{ marginTop: "24px" }}
           size="large"
         >
-          Logga ut
+          {t("profile.logout")}
         </Button>
       </Card>
     </PageContainer>

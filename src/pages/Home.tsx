@@ -21,6 +21,7 @@ import {
 } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState } from "react";
 import { PageContainer } from "../components/PageContainer";
+import { useLanguage } from "../contexts/LanguageContext";
 import { CommentsService, NewsComment } from "../services/CommentsService";
 import { NewsArticle, NewsService } from "../services/NewsService";
 import { getStoredAuthToken, getUsernameFromJwt } from "../utils/authToken";
@@ -28,7 +29,8 @@ import { getStoredAuthToken, getUsernameFromJwt } from "../utils/authToken";
 const useStyles = makeStyles({
   header: {
     marginBottom: "32px",
-    backgroundColor: tokens.colorNeutralBackground1,
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderBottom: `3px solid ${tokens.colorBrandStroke1}`,
     ...shorthands.padding("20px", "0"),
     ...shorthands.margin("0", "-20px"),
     paddingLeft: "20px",
@@ -75,7 +77,7 @@ const useStyles = makeStyles({
   chronicleContent: {
     lineHeight: "1.6",
     whiteSpace: "pre-wrap",
-    color: tokens.colorNeutralForeground2,
+    color: tokens.colorNeutralForeground1,
   },
   chronicleMetadata: {
     marginTop: "16px",
@@ -121,13 +123,13 @@ const useStyles = makeStyles({
   commentsSection: {
     marginTop: "24px",
     paddingTop: "24px",
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderTop: `2px solid ${tokens.colorNeutralStroke1}`,
   },
   commentsHeader: {
     marginBottom: "16px",
     fontSize: tokens.fontSizeBase400,
     fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorNeutralForeground1,
+    color: tokens.colorNeutralForeground2,
   },
   commentsList: {
     display: "flex",
@@ -135,10 +137,11 @@ const useStyles = makeStyles({
     ...shorthands.gap("12px"),
   },
   commentCard: {
-    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundColor: tokens.colorNeutralBackground2,
     ...shorthands.padding("12px", "16px"),
     ...shorthands.borderRadius(tokens.borderRadiusMedium),
     position: "relative",
+    borderLeft: `3px solid ${tokens.colorBrandStroke1}`,
   },
   commentText: {
     marginBottom: "8px",
@@ -169,6 +172,7 @@ const useStyles = makeStyles({
 
 export default function Home() {
   const styles = useStyles();
+  const { t } = useLanguage();
   const [selectedNewsId, setSelectedNewsId] = useState<string | null>(null);
   const [allNews, setAllNews] = useState<NewsArticle[]>([]);
   const [selectedChronicle, setSelectedChronicle] =
@@ -189,44 +193,41 @@ export default function Home() {
 
   // Load all news and comments on mount
   useEffect(() => {
-    const loadAllData = async () => {
+    const loadData = async () => {
+      // 1. Load news first — clears the spinner and shows the chronicle ASAP.
       setLoading(true);
       try {
-        console.log("🔄 Loading news and comments...");
-
-        // Load news
         const news = await NewsService.getAllNews();
-        console.log("📰 News loaded:", news.length);
         setAllNews(news);
 
-        // Load comments
-        setCommentsLoading(true);
-        console.log("💬 Fetching comments...");
-        const comments = await CommentsService.getAllComments();
-        console.log("💬 Comments loaded:", comments.length, comments);
-        setAllComments(comments);
-        setCommentsLoading(false);
-
-        // Select the latest news by default (most recent CreatedTime)
         if (news.length > 0) {
           const sortedNews = [...news].sort(
             (a, b) =>
               new Date(b.CreatedTime).getTime() -
               new Date(a.CreatedTime).getTime(),
           );
-          const latestNews = sortedNews[0];
-          console.log("✅ Selected latest news:", latestNews.Id);
-          setSelectedNewsId(latestNews.Id);
-          setSelectedChronicle(latestNews);
+          setSelectedNewsId(sortedNews[0].Id);
+          setSelectedChronicle(sortedNews[0]);
         }
       } catch (error) {
-        console.error("❌ Failed to load data:", error);
+        console.error("❌ Failed to load news:", error);
       } finally {
         setLoading(false);
       }
+
+      // 2. Only start loading comments once the chronicle is visible.
+      setCommentsLoading(true);
+      try {
+        const comments = await CommentsService.getAllComments();
+        setAllComments(comments);
+      } catch (error) {
+        console.error("❌ Failed to load comments:", error);
+      } finally {
+        setCommentsLoading(false);
+      }
     };
 
-    loadAllData();
+    loadData();
   }, []);
   // Group news by year
   const newsGroupedByYear = useMemo(() => {
@@ -317,15 +318,13 @@ export default function Home() {
       setEditText("");
     } catch (error) {
       console.error("Failed to update comment:", error);
-      alert("Kunde inte uppdatera kommentaren. " + error);
+      alert(t("home.errorUpdateComment"));
     }
   };
 
   // Handle comment delete
   const handleDeleteComment = async (commentId: number) => {
-    if (
-      !window.confirm("Är du säker på att du vill ta bort denna kommentar?")
-    ) {
+    if (!window.confirm(t("home.confirmDeleteComment"))) {
       return;
     }
 
@@ -336,7 +335,7 @@ export default function Home() {
       setAllComments(comments);
     } catch (error) {
       console.error("Failed to delete comment:", error);
-      alert("Kunde inte ta bort kommentaren. " + error);
+      alert(t("home.errorDeleteComment"));
     }
   };
 
@@ -351,7 +350,7 @@ export default function Home() {
     }
 
     if (!selectedNewsId) {
-      alert("Ingen krönika vald");
+      alert(t("home.errorNoChronicle"));
       return;
     }
 
@@ -367,7 +366,7 @@ export default function Home() {
       setNewCommentText("");
     } catch (error) {
       console.error("Failed to create comment:", error);
-      alert("Kunde inte skapa kommentaren. " + error);
+      alert(t("home.errorCreateComment"));
     } finally {
       setIsSubmitting(false);
     }
@@ -420,7 +419,7 @@ export default function Home() {
         <Card className={styles.chronicleCard}>
           <div className={styles.loading}>
             <Spinner size="medium" />
-            <Body1>Laddar krönika...</Body1>
+            <Body1>{t("home.loadingChronicle")}</Body1>
           </div>
         </Card>
       ) : selectedChronicle ? (
@@ -430,7 +429,7 @@ export default function Home() {
           </div>{" "}
           <div className={styles.chronicleMetadata}>
             <span>
-              Publicerad:{" "}
+              {t("home.published")}{" "}
               {new Date(selectedChronicle.CreatedTime).toLocaleDateString(
                 "sv-SE",
                 {
@@ -446,12 +445,12 @@ export default function Home() {
           {/* Comments Section */}
           <div className={styles.commentsSection}>
             <div className={styles.commentsHeader}>
-              Kommentarer ({chronicleComments.length})
+              {t("home.comments", { count: chronicleComments.length })}
             </div>
             {/* New Comment Input */}
             <div style={{ marginBottom: "16px" }}>
               <Textarea
-                placeholder="Skriv en kommentar..."
+                placeholder={t("home.writeComment")}
                 value={newCommentText}
                 onChange={(e) => setNewCommentText(e.target.value)}
                 rows={3}
@@ -462,13 +461,13 @@ export default function Home() {
                 onClick={handleCreateComment}
                 disabled={!newCommentText.trim() || isSubmitting}
               >
-                {isSubmitting ? "Skickar..." : "Skicka kommentar"}
+                {isSubmitting ? t("home.sending") : t("home.sendComment")}
               </Button>
             </div>
             {commentsLoading ? (
               <div className={styles.loading}>
                 <Spinner size="small" />
-                <Body1>Laddar kommentarer...</Body1>
+                <Body1>{t("home.loadingComments")}</Body1>
               </div>
             ) : chronicleComments.length > 0 ? (
               <div className={styles.commentsList}>
@@ -491,7 +490,7 @@ export default function Home() {
                               appearance="primary"
                               onClick={() => handleUpdateComment(comment.Id)}
                             >
-                              Spara
+                              {t("common.save")}
                             </Button>
                             <Button
                               size="small"
@@ -500,7 +499,7 @@ export default function Home() {
                                 setEditText("");
                               }}
                             >
-                              Avbryt
+                              {t("common.cancel")}
                             </Button>
                           </div>
                         </>
@@ -556,14 +555,14 @@ export default function Home() {
                 })}
               </div>
             ) : (
-              <div className={styles.noComments}>Inga kommentarer än</div>
+              <div className={styles.noComments}>{t("home.noComments")}</div>
             )}
           </div>
         </Card>
       ) : (
         <Card className={styles.chronicleCard}>
           <div className={styles.emptyState}>
-            <Body1>Ingen krönika tillgänglig</Body1>
+            <Body1>{t("home.noChronicle")}</Body1>
           </div>
         </Card>
       )}

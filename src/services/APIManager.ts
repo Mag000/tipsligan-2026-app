@@ -2,7 +2,11 @@ import {
   SvenskaSpelResponse,
   SvenskaSpelResultResponse,
 } from "../types/svenskaspel";
-import { getAuthHeaders, isAuthenticated } from "../utils/authHelpers";
+import {
+  getAuthHeaders,
+  handle401,
+  isAuthenticated,
+} from "../utils/authHelpers";
 import { requestDeduplicator } from "../utils/requestDeduplication";
 import { retryWithBackoff } from "../utils/retryWithBackoff";
 
@@ -14,10 +18,23 @@ interface LatestSyncedRound {
   NewRoundsCreated: number;
 }
 
+/**
+ * Thin fetch wrapper that intercepts 401 responses globally.
+ * All authenticated API calls should use this instead of raw fetch.
+ */
+async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(input, init);
+  if (response.status === 401) {
+    handle401();
+    // Return the response anyway so callers can short-circuit cleanly
+  }
+  return response;
+}
+
 export class APIManager {
   // Authentication
   static async login(username: string, password: string): Promise<string> {
-    const response = await fetch(`${API_BASE_URL}/login`, {
+    const response = await apiFetch(`${API_BASE_URL}/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -60,7 +77,7 @@ export class APIManager {
     const headers = getAuthHeaders();
     if (!headers) return []; // Redirect to login is already triggered
 
-    const response = await fetch(`${API_BASE_URL}/matches`, {
+    const response = await apiFetch(`${API_BASE_URL}/matches`, {
       headers,
     });
 
@@ -76,7 +93,7 @@ export class APIManager {
     const headers = getAuthHeaders();
     if (!headers) return []; // Redirect to login is already triggered
 
-    const response = await fetch(`${API_BASE_URL}/standings`, {
+    const response = await apiFetch(`${API_BASE_URL}/standings`, {
       headers,
     });
 
@@ -92,7 +109,7 @@ export class APIManager {
     const headers = getAuthHeaders();
     if (!headers) return []; // Redirect to login is already triggered
 
-    const response = await fetch(`${API_BASE_URL}/predictions/user`, {
+    const response = await apiFetch(`${API_BASE_URL}/predictions/user`, {
       headers,
     });
 
@@ -110,7 +127,7 @@ export class APIManager {
   ) {
     const headers = getAuthHeaders() || undefined;
 
-    const response = await fetch(`${API_BASE_URL}/predictions`, {
+    const response = await apiFetch(`${API_BASE_URL}/predictions`, {
       method: "POST",
       headers,
       body: JSON.stringify({ matchId, homeScore, awayScore }),
@@ -133,7 +150,7 @@ export class APIManager {
       try {
         const headers = getAuthHeaders() || undefined;
 
-        const response = await fetch(`${API_BASE_URL}/bets/${round}/user`, {
+        const response = await apiFetch(`${API_BASE_URL}/bets/${round}/user`, {
           headers,
           signal,
         });
@@ -169,7 +186,7 @@ export class APIManager {
       throw new Error("Authentication required");
     }
 
-    const response = await fetch(`${API_BASE_URL}/bets/${roundNumber}`, {
+    const response = await apiFetch(`${API_BASE_URL}/bets/${roundNumber}`, {
       method: "POST",
       headers: {
         ...headers,
@@ -198,7 +215,7 @@ export class APIManager {
         const headers = getAuthHeaders();
         if (!headers) return {} as SvenskaSpelResponse; // Redirect triggered
 
-        const response = await fetch(`${API_BASE_URL}/drawInfo/${round}`, {
+        const response = await apiFetch(`${API_BASE_URL}/drawInfo/${round}`, {
           method: "GET",
           headers,
           mode: "cors",
@@ -229,7 +246,7 @@ export class APIManager {
         const headers = getAuthHeaders();
         if (!headers) return {} as SvenskaSpelResultResponse; // Redirect triggered
 
-        const response = await fetch(`${API_BASE_URL}/drawResult/${round}`, {
+        const response = await apiFetch(`${API_BASE_URL}/drawResult/${round}`, {
           method: "GET",
           headers,
           mode: "cors",
@@ -255,7 +272,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return []; // Redirect triggered
 
-      let response = await fetch(API_BASE_URL + `/draws`, {
+      let response = await apiFetch(API_BASE_URL + `/draws`, {
         headers,
         mode: "cors",
       });
@@ -273,7 +290,7 @@ export class APIManager {
         const headers = getAuthHeaders();
         if (!headers) return []; // Redirect triggered
 
-        const response = await fetch(`${API_BASE_URL}/bets/${round}`, {
+        const response = await apiFetch(`${API_BASE_URL}/bets/${round}`, {
           headers,
           signal,
         });
@@ -300,7 +317,7 @@ export class APIManager {
         const headers = getAuthHeaders();
         if (!headers) return {}; // Redirect triggered
 
-        const response = await fetch(`${API_BASE_URL}/distribution/${round}`, {
+        const response = await apiFetch(`${API_BASE_URL}/distribution/${round}`, {
           headers,
           signal,
         });
@@ -328,7 +345,7 @@ export class APIManager {
     try {
       const headers = getAuthHeaders() || undefined;
 
-      const response = await fetch(`${API_BASE_URL}/bets/${round}/finalize`, {
+      const response = await apiFetch(`${API_BASE_URL}/bets/${round}/finalize`, {
         method: "PUT",
         headers,
       });
@@ -353,7 +370,7 @@ export class APIManager {
     try {
       const headers = getAuthHeaders() || undefined;
 
-      const response = await fetch(`${API_BASE_URL}/bet`, {
+      const response = await apiFetch(`${API_BASE_URL}/bet`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -381,13 +398,32 @@ export class APIManager {
     return this.finalizeBetsForRound(round);
   }
 
+  // Set safe match for the current user. Pass matchNumber=0 to clear safe on all matches.
+  static async setSafeMatch(round: number, matchNumber: number) {
+    const headers = getAuthHeaders();
+    if (!headers) return;
+
+    const response = await apiFetch(`${API_BASE_URL}/bet/safe`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ round, matchNumber }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to set safe match: ${errorText}`);
+    }
+
+    return response.json();
+  }
+
   // Get news for a specific round
   static async getNews(round: number) {
     try {
       const headers = getAuthHeaders();
       if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/news/${round}`, {
+      const response = await apiFetch(`${API_BASE_URL}/news/${round}`, {
         headers,
       });
 
@@ -411,7 +447,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/standings/${period}/current/live/${live}`,
         {
           headers,
@@ -435,7 +471,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/users/all`, {
+      const response = await apiFetch(`${API_BASE_URL}/users/all`, {
         headers,
       });
 
@@ -471,7 +507,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/standings/${round}`, {
+      const response = await apiFetch(`${API_BASE_URL}/standings/${round}`, {
         headers,
       });
 
@@ -493,7 +529,7 @@ export class APIManager {
         const headers = getAuthHeaders();
         if (!headers) return []; // Redirect triggered
 
-        const response = await fetch(`${API_BASE_URL}/rounds/all`, {
+        const response = await apiFetch(`${API_BASE_URL}/rounds/all`, {
           headers,
           signal,
         });
@@ -515,7 +551,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return null; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/round/latest`, {
+      const response = await apiFetch(`${API_BASE_URL}/round/latest`, {
         headers,
       });
 
@@ -540,7 +576,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return null; // Redirect already triggered
 
-      const response = await fetch(`${API_BASE_URL}/round/latest-synced`, {
+      const response = await apiFetch(`${API_BASE_URL}/round/latest-synced`, {
         headers,
       });
 
@@ -569,7 +605,7 @@ export class APIManager {
         const headers = getAuthHeaders();
         if (!headers) return []; // Redirect triggered
 
-        const response = await fetch(`${API_BASE_URL}/matches/${round}`, {
+        const response = await apiFetch(`${API_BASE_URL}/matches/${round}`, {
           headers,
           signal,
         });
@@ -597,7 +633,7 @@ export class APIManager {
         ? `${API_BASE_URL}/results/${round}/true`
         : `${API_BASE_URL}/results/${round}`;
 
-      const response = await fetch(endpoint, {
+      const response = await apiFetch(endpoint, {
         headers,
       });
 
@@ -618,7 +654,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return []; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/basestats`, {
+      const response = await apiFetch(`${API_BASE_URL}/basestats`, {
         method: "PUT",
         headers,
         body: JSON.stringify({ rounds: rounds }),
@@ -712,7 +748,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return {}; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/distribution/${round}`, {
+      const response = await apiFetch(`${API_BASE_URL}/distribution/${round}`, {
         headers,
       });
 
@@ -733,7 +769,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return null; // Redirect triggered
 
-      const response = await fetch(`${API_BASE_URL}/currentroundnumber`, {
+      const response = await apiFetch(`${API_BASE_URL}/currentroundnumber`, {
         headers,
       });
 
@@ -771,7 +807,7 @@ export class APIManager {
 
       const headers = getAuthHeaders() || undefined;
 
-      const response = await fetch(`${API_BASE_URL}/standings`, {
+      const response = await apiFetch(`${API_BASE_URL}/standings`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
@@ -845,7 +881,7 @@ export class APIManager {
 
       const headers = getAuthHeaders() || undefined;
 
-      const response = await fetch(`${API_BASE_URL}/rounds/sync`, {
+      const response = await apiFetch(`${API_BASE_URL}/rounds/sync`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
@@ -872,7 +908,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return null; // Redirect triggered
 
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/rounds/${roundNumber}/mapping`,
         {
           headers,
@@ -895,7 +931,7 @@ export class APIManager {
    */
   // static async updateMatchFromSvenskaSpel(matchId: number, eventData: any) {
   //   try {
-  //     const response = await fetch(`${API_BASE_URL}/matches/${matchId}/sync`, {
+  //     const response = await apiFetch(`${API_BASE_URL}/matches/${matchId}/sync`, {
   //       method: "PUT",
   //       headers: getAuthHeaders(),
   //       body: JSON.stringify(eventData),
@@ -922,7 +958,7 @@ export class APIManager {
       const headers = getAuthHeaders();
       if (!headers) return false; // Redirect triggered
 
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/rounds/check/${spRoundNum}`,
         {
           headers,
@@ -1040,7 +1076,7 @@ export class APIManager {
       // Send to backend
       const headers = getAuthHeaders() || undefined;
 
-      const response = await fetch(`${API_BASE_URL}/rounds/create`, {
+      const response = await apiFetch(`${API_BASE_URL}/rounds/create`, {
         method: "POST",
         headers,
         body: JSON.stringify(roundPayload),
@@ -1062,6 +1098,47 @@ export class APIManager {
       console.error(`❌ Error creating round from draw ${drawNumber}:`, error);
       throw error;
     }
+  }
+
+  static async getElimineringenRoundsForYear(year: number) {
+    const allRounds = await this.getAllRounds();
+    return (
+      allRounds
+        .filter((round: any) => round?.Year === year)
+        // Elimineringen runs February–August only (mirrors server GetEliminationResult)
+        .filter((round: any) => round?.Month >= 2 && round?.Month < 9)
+        .filter((round: any) => typeof round?.SPRoundNum === "number")
+        .sort((a: any, b: any) => a.SPRoundNum - b.SPRoundNum)
+    );
+  }
+
+  static async getElimineringenBaseStatsForYear(year: number) {
+    const rounds = await this.getElimineringenRoundsForYear(year);
+    const roundIds = rounds
+      .map((round: any) => round.SPRoundNum)
+      .filter((id: unknown): id is number => typeof id === "number");
+
+    if (roundIds.length === 0) {
+      return [];
+    }
+
+    return this.getBaseStats(roundIds);
+  }
+
+  static async getElimineringenLiveRoundBundle(round: number) {
+    const [drawInfo, drawResult, allBets, userBets] = await Promise.all([
+      this.getSvenskaSpelDrawInfo(round),
+      this.getSvenskaSpelDrawResult(round).catch(() => null),
+      this.getBetsForRound(round),
+      this.getUserBetsForRound(round),
+    ]);
+
+    return {
+      drawInfo,
+      drawResult,
+      allBets,
+      userBets,
+    };
   }
 
   /**
@@ -1098,3 +1175,4 @@ export class APIManager {
     }
   }
 }
+
